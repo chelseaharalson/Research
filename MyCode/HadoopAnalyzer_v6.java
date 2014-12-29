@@ -85,7 +85,7 @@ import com.ibm.wala.ssa.ConstantValue;
 import com.ibm.wala.analysis.typeInference.*;
 
 
-public class HadoopAnalyzer_v5 {
+public class HadoopAnalyzer_v6 {
     
   //  CGNode => HashSet<SSAInstruction>
   static HashMap<Object, HashSet<Object>> callSites = new HashMap<Object, HashSet<Object>>();
@@ -120,11 +120,12 @@ public class HadoopAnalyzer_v5 {
   // maps instructions to <cgnode,basicblock>
   static HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>> instructionContext = new  HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>>();
   
-  static ArrayList<SSAInstruction> controlStatements = new ArrayList<SSAInstruction>();
+  static ArrayList<SSAInstruction> allStatements = new ArrayList<SSAInstruction>();
   
   static HashMap<SSAInstruction, Statement> seedControls = new HashMap<SSAInstruction, Statement>();
-  static HashMap<SSAInstruction, Statement> seedLeftControls = new HashMap<SSAInstruction, Statement>();
-  static HashMap<SSAInstruction, Statement> seedRightControls = new HashMap<SSAInstruction, Statement>();
+  static HashMap<SSAInstruction, Statement> resultSet = new HashMap<SSAInstruction, Statement>();
+  
+  static ThinSlicer ts;
 
   static  class Triple<T1, T2, T3> {
 
@@ -255,9 +256,9 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
     nodeCount++;
   }
   
-  System.out.println("Control Statements Size: " + controlStatements.size());
+  System.out.println("Statements Size: " + allStatements.size());
   statementCount = 0;
-  for(SSAInstruction si: controlStatements)
+  for(SSAInstruction si: allStatements)
   {
     Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(si);
     CGNode siNode = (CGNode)contextInfo.val2;
@@ -270,68 +271,24 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       {
         statementCount++;
         seedControls.put(si, statement);
-        Statement leftSideStatement = createStatement(siNode, bb, si.getUse(0));
-        Statement rightSideStatement = createStatement(siNode, bb, si.getUse(1));
-        
-        //System.out.println("Left Side Statement: " + leftSideStatement);
-        //System.out.println("Right Side Statement: " + rightSideStatement);
-        
-        if (leftSideStatement != null)
-        {
-          if (!seedLeftControls.containsValue(leftSideStatement))
-          {
-            seedLeftControls.put(si, leftSideStatement);
-          }
-        }
-        
-        
-        if (rightSideStatement != null)
-        {
-          if (!seedRightControls.containsValue(rightSideStatement))
-          {
-            seedRightControls.put(si, rightSideStatement);
-          }
-        }
       }
     }
   }
   
 
   Integer branchCount = 0;
-  Collection<Statement> slice = null;
-  Collection<Statement> leftSlice = null;
-  Collection<Statement> rightSlice = null;
-  ThinSlicer ts = new ThinSlicer(cg,pointerAnalysis);
+  ts = new ThinSlicer(cg,pointerAnalysis);
 
   for(SSAInstruction s : seedControls.keySet())
   {
       Statement statement = seedControls.get(s);
       branchCount++;
-      slice = ts.computeBackwardThinSlice(statement);
-      System.out.println();
-      System.out.println(prettyPrint(s));
+      //System.out.println();
+      //System.out.println(prettyPrint(s));
       System.out.println("Branch In Set: " + branchCount + " << ");
-      dumpSlice(statement, slice);
-      
-      if (seedLeftControls.containsKey(s))
-      {
-        Statement statementLeft = seedLeftControls.get(s);
-        leftSlice = ts.computeBackwardThinSlice(statementLeft);
-        System.out.println("Operand 1's Slice: ** ");
-        dumpSlice(statementLeft, leftSlice);
-        System.out.println(" **");
-      }
-      
-      
-      if (seedRightControls.containsKey(s))
-      {
-        Statement statementRight = seedRightControls.get(s);
-        rightSlice = ts.computeBackwardThinSlice(statementRight);
-        System.out.println("Operand 2's Slice: ** ");
-        dumpSlice(statementRight, rightSlice);
-        System.out.println(" **");
-      }
+      thinSlice(statement, new HashSet<Statement>());
       System.out.println(" >>");
+      //break;
   }
   
   System.out.println("The max node count is: " + maxNodePerPath);
@@ -397,21 +354,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
     if (orig != null)
     {
       //System.out.println("Visiting " + prettyPrint(orig));
-      if (orig instanceof SSAConditionalBranchInstruction)
-      {
-        SSAConditionalBranchInstruction ci = (SSAConditionalBranchInstruction) orig;
-        controlStatements.add(ci);
-        //System.out.println("Test: " + orig);
-        kBranchCount++;
-      }
-      
-      if (orig instanceof SSASwitchInstruction)
-      {
-        SSASwitchInstruction si = (SSASwitchInstruction) orig;
-        controlStatements.add(si);
-        //System.out.println("Test: " + orig);
-        kBranchCount++;
-      }
+      allStatements.add(orig);
+      kBranchCount++;
     }
       
       // Loop through preds and then call function recursively on each one.. Explores the predecessors
@@ -431,6 +375,34 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
      }
     
     return kBranchCount;
+  }
+  
+  public static Collection<Statement> thinSlice(Statement s, HashSet<Statement> visitedStatements)
+  {
+    Collection<Statement> slice = null;
+    
+    if (visitedStatements.contains(s))
+    {
+      return null;
+    }
+    visitedStatements.add(s);
+
+    slice = ts.computeBackwardThinSlice(s);
+    dumpSlice(s, slice);
+    
+    if((slice != null) && (s != null))
+    {
+      for(Statement st : slice)
+      {
+        Collection<Statement> sl = thinSlice(st, new HashSet<Statement>(visitedStatements));
+        if(sl != null)
+        {
+          return sl;
+        }
+      }
+    }
+    
+    return null;
   }
   
   
