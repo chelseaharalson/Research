@@ -180,7 +180,7 @@ public class HadoopAnalyzer_v6 {
   else
     kMax = Integer.parseInt(p.getProperty("kMax"));
   
-   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + "kMax=" + kMax);
+   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + " kMax=" + kMax);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
