@@ -111,6 +111,7 @@ public class HadoopAnalyzer_v6 {
   static HeapModel heapModel;
   static Integer kDeep;
   static Integer kBranch;
+  static Integer kMax;
   static Integer nodeCount;
   static int maxNodePerPath = 0;
   static int maxStatementCount = 0;
@@ -174,7 +175,12 @@ public class HadoopAnalyzer_v6 {
   else
     kBranch = Integer.parseInt(p.getProperty("kBranch"));
   
-   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch);
+  if (p.getProperty("kMax") == null)
+    kMax = 0;
+  else
+    kMax = Integer.parseInt(p.getProperty("kMax"));
+  
+   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + "kMax=" + kMax);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
@@ -283,8 +289,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   {
       Statement statement = seedControls.get(s);
       branchCount++;
-      //System.out.println();
-      //System.out.println(prettyPrint(s));
+      System.out.println();
+      System.out.println(prettyPrint(s));
       System.out.println("Branch In Set: " + branchCount + " << ");
       thinSlice(statement, new HashSet<Statement>());
       System.out.println(" >>");
@@ -377,32 +383,36 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
     return kBranchCount;
   }
   
-  public static Collection<Statement> thinSlice(Statement s, HashSet<Statement> visitedStatements)
+  public static Collection<Statement> thinSlice(Statement st, HashSet<Statement> visitedStatements)
   {
-    Collection<Statement> slice = null;
-    
-    if (visitedStatements.contains(s))
+    int count = 0;
+    ArrayList<Statement> result = new ArrayList<Statement>();
+    if(visitedStatements.contains(st))
     {
-      return null;
+      return result;
     }
-    visitedStatements.add(s);
-
-    slice = ts.computeBackwardThinSlice(s);
-    dumpSlice(s, slice);
+    visitedStatements.add(st);
+    Collection<Statement> slice = ts.computeBackwardThinSlice(st);
+    dumpSlice(st, slice);
     
-    if((slice != null) && (s != null))
+    sliceLoop:
     {
-      for(Statement st : slice)
+      for(Statement str : slice) 
       {
-        Collection<Statement> sl = thinSlice(st, new HashSet<Statement>(visitedStatements));
-        if(sl != null)
+        count++;
+        if ((count > kMax) && (kMax > 0))
         {
-          return sl;
+          break sliceLoop;
+        }
+        result.addAll(slice);
+        Collection<Statement> sliceRec = thinSlice(str, new HashSet<Statement>(visitedStatements));
+        if (sliceRec.size() > 0)
+        {
+           result.addAll(sliceRec);
         }
       }
     }
-    
-    return null;
+   return result;
   }
   
   
