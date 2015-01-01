@@ -112,6 +112,8 @@ public class HadoopAnalyzer_v6 {
   static Integer kDeep;
   static Integer kBranch;
   static Integer kMax;
+  static Integer kBranchMin;
+  static Integer kBranchMax;
   static Integer nodeCount;
   static int maxNodePerPath = 0;
   static int maxStatementCount = 0;
@@ -180,7 +182,17 @@ public class HadoopAnalyzer_v6 {
   else
     kMax = Integer.parseInt(p.getProperty("kMax"));
   
-   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + " kMax=" + kMax);
+  if (p.getProperty("kBranchMin") == null)
+    kBranchMin = 0;
+  else
+    kBranchMin = Integer.parseInt(p.getProperty("kBranchMin"));
+  
+  if (p.getProperty("kBranchMax") == null)
+    kBranchMax = 0;
+  else
+    kBranchMax = Integer.parseInt(p.getProperty("kBranchMax"));
+  
+   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + " kMax=" + kMax + " kBranchMin=" + kBranchMin + " kBranchMax=" + kBranchMax);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
@@ -289,6 +301,10 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   {
       Statement statement = seedControls.get(s);
       branchCount++;
+      if((branchCount < kBranchMin) || (branchCount > kBranchMax))
+      {
+        continue;
+      }
       System.out.println();
       System.out.println(prettyPrint(s));
       System.out.println("Branch In Set: " + branchCount + " << ");
