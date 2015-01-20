@@ -85,7 +85,7 @@ import com.ibm.wala.ssa.ConstantValue;
 import com.ibm.wala.analysis.typeInference.*;
 
 
-public class HadoopAnalyzer_v6 {
+public class HadoopAnalyzer_v8 {
     
   //  CGNode => HashSet<SSAInstruction>
   static HashMap<Object, HashSet<Object>> callSites = new HashMap<Object, HashSet<Object>>();
@@ -111,9 +111,6 @@ public class HadoopAnalyzer_v6 {
   static HeapModel heapModel;
   static Integer kDeep;
   static Integer kBranch;
-  static Integer kMax;
-  static Integer kBranchMin;
-  static Integer kBranchMax;
   static Integer nodeCount;
   static int maxNodePerPath = 0;
   static int maxStatementCount = 0;
@@ -123,12 +120,9 @@ public class HadoopAnalyzer_v6 {
   // maps instructions to <cgnode,basicblock>
   static HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>> instructionContext = new  HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>>();
   
-  static ArrayList<SSAInstruction> allStatements = new ArrayList<SSAInstruction>();
+  static ArrayList<SSAInstruction> controlStatements = new ArrayList<SSAInstruction>();
   
   static HashMap<SSAInstruction, Statement> seedControls = new HashMap<SSAInstruction, Statement>();
-  static HashMap<SSAInstruction, Statement> resultSet = new HashMap<SSAInstruction, Statement>();
-  
-  static ThinSlicer ts;
 
   static  class Triple<T1, T2, T3> {
 
@@ -177,22 +171,7 @@ public class HadoopAnalyzer_v6 {
   else
     kBranch = Integer.parseInt(p.getProperty("kBranch"));
   
-  if (p.getProperty("kMax") == null)
-    kMax = 0;
-  else
-    kMax = Integer.parseInt(p.getProperty("kMax"));
-  
-  if (p.getProperty("kBranchMin") == null)
-    kBranchMin = 0;
-  else
-    kBranchMin = Integer.parseInt(p.getProperty("kBranchMin"));
-  
-  if (p.getProperty("kBranchMax") == null)
-    kBranchMax = 0;
-  else
-    kBranchMax = Integer.parseInt(p.getProperty("kBranchMax"));
-  
-   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + " kMax=" + kMax + " kBranchMin=" + kBranchMin + " kBranchMax=" + kBranchMax);
+   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
@@ -205,10 +184,11 @@ public class HadoopAnalyzer_v6 {
   }
   // use exclusions to eliminate certain library packages
   
-  if (targetClassNames == null)
-    System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
+  //System.out.println("kdeep: " + kDeep + "   kbranch: " + kBranch);
 
-  // Call graph indicates which procedures can call which other procedures, and from which program points
+  if (targetClassNames == null)
+System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
+
   System.out.println("building call graph...");
   configureAndCreateCallGraph(scopeFile, mainClass, entryClass); 
 
@@ -219,29 +199,26 @@ public class HadoopAnalyzer_v6 {
   pointerAnalysis = builder.getPointerAnalysis();
   heapModel = pointerAnalysis.getHeapModel();
   //System.out.println("Exploding the call graph.." + cg.getClass().getName());
-  
-  // Create the interprocedural control flow graph==============================================================
+   
+  // Create the interprocedural control flow graph=======================================================
   icfg = ExplodedInterproceduralCFG.make(cg);
   ArrayList<SSAInstruction> seedInstr = new ArrayList<SSAInstruction>();
   
-  // Iterate through nodes of ICGF
+  // Iterate through nodes and put instructions in hashmap
+  //Integer seedInstrCount = 0;    
   for(CGNode node: icfg.getCallGraph()) 
   {
+     // find seed instruction
+     //SSAInstruction instr = findCallToInstr(node, "newInstance");
+     
      if (!isATarget(node)) continue;
-     // A control flow graph is a graph of all paths that might be traversed through a program during its execution
-     // Explodes by symbolically executing all possible paths in a program
      ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
      
      if (graph == null) continue; 
-     // An intermediate representation is a representation of a program part way between the source and target languages
      IR ir = node.getIR();
      
      if (ir == null) continue;
      SSAInstruction[] insts = ir.getInstructions();
-     // Iterate through SSA Instructions in IR. Store in a hashmap the SSAInstruction, call graph node, and exploded basic block
-     // Basic block is a portion of the code within a program with only one entry point and only one exit point
-     // Sequence of consecutive statements in which flow of control enters at the beginning and leaves at the end without halt or 
-     // possibility of branching except at the end
      for(int i=0; i < insts.length; i++) 
      {
          SSAInstruction inst = insts[i];
@@ -253,17 +230,18 @@ public class HadoopAnalyzer_v6 {
 
 
   SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  //SSAInstruction instr = findCallToMethodCall(class1, method1, class2,method2);
+  //SSAInstruction instr = findCallToMethodCall(class1, method1, class2, method2);
     
-      if (instr != null)
+     if (instr != null)
      {
-        System.out.println("Found the seed instruction: " + prettyPrint(instr));
+         System.out.println("Found the seed instruction: " + prettyPrint(instr));
          seedInstr.add(instr);
          //seedInstrCount++;
          //System.out.println("Seed Instruction Count: " + seedInstrCount);
      }
   
   nodeCount = 0;
+  // Iterate through instructions and explore predecessors of the instructions
   for(SSAInstruction st: seedInstr)
   {
     Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(st);
@@ -274,15 +252,16 @@ public class HadoopAnalyzer_v6 {
     nodeCount++;
   }
   
-  System.out.println("Statements Size: " + allStatements.size());
+  System.out.println("Control Statements Size: " + controlStatements.size());
   statementCount = 0;
-  for(SSAInstruction si: allStatements)
+  // Iterate through control instructions and create statements from the control instructions
+  for(SSAInstruction si: controlStatements)
   {
     Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(si);
     CGNode siNode = (CGNode)contextInfo.val2;
     IExplodedBasicBlock bb = (IExplodedBasicBlock)contextInfo.val3;
     Statement statement = createStatement(siNode, si);
-    
+    // Put statements and instructions in a hashmap
     if (statement != null)
     {
       if (!seedControls.containsValue(statement))
@@ -295,22 +274,20 @@ public class HadoopAnalyzer_v6 {
   
 
   Integer branchCount = 0;
-  ts = new ThinSlicer(cg,pointerAnalysis);
-
+  Collection<Statement> slice = null;
+  ThinSlicer ts = new ThinSlicer(cg,pointerAnalysis);
+  // Perform thin slicing on control statements
   for(SSAInstruction s : seedControls.keySet())
   {
       Statement statement = seedControls.get(s);
       branchCount++;
-      if((branchCount < kBranchMin) || (branchCount > kBranchMax))
-      {
-        continue;
-      }
+      slice = ts.computeBackwardThinSlice(statement);
       System.out.println();
       System.out.println(prettyPrint(s));
       System.out.println("Branch In Set: " + branchCount + " << ");
-      thinSlice(statement, new HashSet<Statement>());
+      dumpSlice(statement, slice);
+      
       System.out.println(" >>");
-      //break;
   }
   
   System.out.println("The max node count is: " + maxNodePerPath);
@@ -325,7 +302,7 @@ public class HadoopAnalyzer_v6 {
 
    private static String prettyPrint(SSAInstruction inst) {
         //if (inst instanceof SSAInvokeInstruction)
-	//  return inst.toString();
+       //  return inst.toString();
         Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(inst);
         int instIndex = ((Integer)contextInfo.val1).intValue();
         CGNode node = (CGNode)contextInfo.val2;        
@@ -376,101 +353,37 @@ public class HadoopAnalyzer_v6 {
     if (orig != null)
     {
       //System.out.println("Visiting " + prettyPrint(orig));
-      allStatements.add(orig);
-      kBranchCount++;
-    }
+      if (orig instanceof SSAConditionalBranchInstruction)
+      {
+        SSAConditionalBranchInstruction ci = (SSAConditionalBranchInstruction) orig;
+        controlStatements.add(ci);
+        kBranchCount++;
+      }
       
-      // Loop through preds and then call function recursively on each one.. Explores the predecessors
-
-      // Finds the call sites of the method
+      if (orig instanceof SSASwitchInstruction)
+      {
+        SSASwitchInstruction si = (SSASwitchInstruction) orig;
+        controlStatements.add(si);
+        kBranchCount++;
+      }
+    }
+   
      //System.out.println("\tBasicBlock's node= " + node);
      ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
      if ((graph != null) && (origBB != null))
      {
-
-      Collection<IExplodedBasicBlock> preds = graph.getNormalPredecessors(origBB);      
-      //System.out.println("Predecessors=" + preds.size());
-      for(IExplodedBasicBlock predBB : preds) 
-      {
-            explorePredecessors(myID, statementCount + 1, kBranchCount, new HashSet<IExplodedBasicBlock>(visited), node, predBB);
-      }
+        Collection<IExplodedBasicBlock> preds = graph.getNormalPredecessors(origBB);      
+        //System.out.println("Predecessors=" + preds.size());
+        // Iterate through predecessors and call function recursively on each one.. Explores the predecessors
+        for(IExplodedBasicBlock predBB : preds) 
+        {
+              explorePredecessors(myID, statementCount + 1, kBranchCount, new HashSet<IExplodedBasicBlock>(visited), node, predBB);
+        }
      }
     
     return kBranchCount;
   }
   
-  public static Collection<Statement> thinSlice(Statement st, HashSet<Statement> visitedStatements)
-  {
-    int count = 0;
-    ArrayList<Statement> result = new ArrayList<Statement>();
-    if(visitedStatements.contains(st))
-    {
-      return result;
-    }
-    visitedStatements.add(st);
-    Collection<Statement> slice = ts.computeBackwardThinSlice(st);
-    dumpSlice(st, slice);
-    
-    sliceLoop:
-    {
-      for(Statement str : slice) 
-      {
-        count++;
-        if ((count > kMax) && (kMax > 0))
-        {
-          break sliceLoop;
-        }
-        result.addAll(slice);
-        Collection<Statement> sliceRec = thinSlice(str, new HashSet<Statement>(visitedStatements));
-        if (sliceRec.size() > 0)
-        {
-           result.addAll(sliceRec);
-        }
-      }
-    }
-   return result;
-  }
-  
-  
-  public static SSAInstruction findDef(HashSet<IExplodedBasicBlock> visited, CGNode node, IExplodedBasicBlock origBB, int valueNumber)
-  {
-    SSAInstruction orig = origBB.getInstruction();
-    
-    if (visited.contains(origBB))
-    {
-      //System.out.println("Visited the basic block before!");
-      return null;
-    }
-    visited.add(origBB);
-    
-    if(orig != null)
-    {
-      if (orig.getDef() == valueNumber)
-      {
-        return orig;
-      }
-
-      // Finds the call sites of the method
-     //System.out.println("\tBasicBlock's node= " + node);
-     ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
-     if ((graph != null) && (origBB != null))
-     {
-
-      Collection<IExplodedBasicBlock> preds = graph.getNormalPredecessors(origBB);      
-      //System.out.println("Predecessors=" + preds.size());
-      for(IExplodedBasicBlock predBB : preds) 
-      {
-        SSAInstruction res = findDef(new HashSet<IExplodedBasicBlock>(visited), node, predBB, valueNumber);
-        if (res != null)
-        {
-          return res;
-        }
-      }
-     }
-    }
-    
-    return null;
-  }
   
     private static void addToSet(HashMap<Object, HashSet<Object>> oneToMany, Object key, Object value) {
         HashSet<Object> set;
@@ -485,8 +398,8 @@ public class HadoopAnalyzer_v6 {
     private static void addCallSites(CGNode node, SSAInstruction inst) {
         if (inst instanceof SSAInvokeInstruction) {
             java.util.Set<CGNode> mnodes = cg.getNodes(((SSAInvokeInstruction)inst).getDeclaredTarget());
-            for(CGNode n : mnodes) {
-              addToSet(callSites, n, inst);
+            for(CGNode n : mnodes) { 
+                   addToSet(callSites, n, inst);
                 //System.out.println("HOW COME " + prettyPrint(inst) + "\n\t AND" + n.getMethod().getName().toString() + " ARE THE SAME?");
             }
         }
@@ -652,30 +565,6 @@ public class HadoopAnalyzer_v6 {
            return new NormalStatement(n, i);
         }
      }
-     System.out.println("Could not locate the instruction in " + n);
-     return null;
-   }
-  
-  
-  public static Statement createStatement(CGNode n, IExplodedBasicBlock bb, int valueNumber) 
-  {
-    SSAInstruction sDef = findDef(new HashSet<IExplodedBasicBlock>(), n, bb, valueNumber);
-    
-    if (sDef != null)
-    {
-      IR ir = n.getIR();
-      if (ir == null) 
-      {
-        return null;
-      }
-      for (int i = 0; i < ir.getInstructions().length; i++)
-      {
-          SSAInstruction s = ir.getInstructions()[i];
-          if (s == sDef)
-            return new NormalStatement(n, i);
-      }
-    }
-
      System.out.println("Could not locate the instruction in " + n);
      return null;
    }

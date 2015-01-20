@@ -1,5 +1,4 @@
 package MyCode;
-
 import java.io.File;
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -85,10 +84,10 @@ import com.ibm.wala.ssa.ConstantValue;
 import com.ibm.wala.analysis.typeInference.*;
 
 
-public class HadoopAnalyzer_v6 {
+public class HadoopAnalyzer_v7 {
     
-  //  CGNode => HashSet<SSAInstruction>
-  static HashMap<Object, HashSet<Object>> callSites = new HashMap<Object, HashSet<Object>>();
+    //  CGNode => HashSet<SSAInstruction>
+    static HashMap<Object, HashSet<Object>> callSites = new HashMap<Object, HashSet<Object>>();
 
   static String class1 = "Ltest";
   static String method1 = "bar";
@@ -97,7 +96,7 @@ public class HadoopAnalyzer_v6 {
   static String filterClass = "LtestConf";
   static String filterParType = "Ljava/lang/String;";
 
-  //Should read this from the command line
+//Should read this from the command line
   static String pType;
   static String targetClassNames;
   static String mainClass;
@@ -111,24 +110,22 @@ public class HadoopAnalyzer_v6 {
   static HeapModel heapModel;
   static Integer kDeep;
   static Integer kBranch;
-  static Integer kMax;
-  static Integer kBranchMin;
-  static Integer kBranchMax;
   static Integer nodeCount;
   static int maxNodePerPath = 0;
   static int maxStatementCount = 0;
   static int maxStatementCountAllPaths = 0;
   static Integer statementCount;
-  
+  static HashMap<SSAInstruction, Integer> controlInstructionDepth = new HashMap<SSAInstruction, Integer>();
+  static HashMap<Statement, Integer> controlStatementDepth = new HashMap<Statement, Integer>();
+  // parameter -> depth of the branch that was used as slicing seed -> the smallest step that it started to appear
+  static HashMap<String, Integer> parameterControlDistance = new HashMap<String, Integer>();
+  static HashMap<String, HashMap<Statement, Integer>> parameterSlicingDistance = new HashMap<String, HashMap<Statement, Integer>>();  
+
+
   // maps instructions to <cgnode,basicblock>
   static HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>> instructionContext = new  HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>>();
   
-  static ArrayList<SSAInstruction> allStatements = new ArrayList<SSAInstruction>();
-  
-  static HashMap<SSAInstruction, Statement> seedControls = new HashMap<SSAInstruction, Statement>();
-  static HashMap<SSAInstruction, Statement> resultSet = new HashMap<SSAInstruction, Statement>();
-  
-  static ThinSlicer ts;
+  static ArrayList<SSAInstruction> controlStatements = new ArrayList<SSAInstruction>();
 
   static  class Triple<T1, T2, T3> {
 
@@ -177,22 +174,7 @@ public class HadoopAnalyzer_v6 {
   else
     kBranch = Integer.parseInt(p.getProperty("kBranch"));
   
-  if (p.getProperty("kMax") == null)
-    kMax = 0;
-  else
-    kMax = Integer.parseInt(p.getProperty("kMax"));
-  
-  if (p.getProperty("kBranchMin") == null)
-    kBranchMin = 0;
-  else
-    kBranchMin = Integer.parseInt(p.getProperty("kBranchMin"));
-  
-  if (p.getProperty("kBranchMax") == null)
-    kBranchMax = 0;
-  else
-    kBranchMax = Integer.parseInt(p.getProperty("kBranchMax"));
-  
-   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch + " kMax=" + kMax + " kBranchMin=" + kBranchMin + " kBranchMax=" + kBranchMax);
+   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
@@ -205,10 +187,11 @@ public class HadoopAnalyzer_v6 {
   }
   // use exclusions to eliminate certain library packages
   
-  if (targetClassNames == null)
-    System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
+  //System.out.println("kdeep: " + kDeep + "   kbranch: " + kBranch);
 
-  // Call graph indicates which procedures can call which other procedures, and from which program points
+  if (targetClassNames == null)
+System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
+
   System.out.println("building call graph...");
   configureAndCreateCallGraph(scopeFile, mainClass, entryClass); 
 
@@ -219,29 +202,28 @@ public class HadoopAnalyzer_v6 {
   pointerAnalysis = builder.getPointerAnalysis();
   heapModel = pointerAnalysis.getHeapModel();
   //System.out.println("Exploding the call graph.." + cg.getClass().getName());
-  
-  // Create the interprocedural control flow graph==============================================================
+   
+  // Create the interprocedural control flow graph=======================================================
   icfg = ExplodedInterproceduralCFG.make(cg);
   ArrayList<SSAInstruction> seedInstr = new ArrayList<SSAInstruction>();
+  ArrayList<Statement> seedStatements = new ArrayList<Statement>();
   
-  // Iterate through nodes of ICGF
+  Integer idx = 0;
+  //Integer seedInstrCount = 0;    
   for(CGNode node: icfg.getCallGraph()) 
   {
+     idx++;
+     // find seed instruction
+     //SSAInstruction instr = findCallToInstr(node, "newInstance");
+     
      if (!isATarget(node)) continue;
-     // A control flow graph is a graph of all paths that might be traversed through a program during its execution
-     // Explodes by symbolically executing all possible paths in a program
      ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
      
      if (graph == null) continue; 
-     // An intermediate representation is a representation of a program part way between the source and target languages
      IR ir = node.getIR();
      
      if (ir == null) continue;
      SSAInstruction[] insts = ir.getInstructions();
-     // Iterate through SSA Instructions in IR. Store in a hashmap the SSAInstruction, call graph node, and exploded basic block
-     // Basic block is a portion of the code within a program with only one entry point and only one exit point
-     // Sequence of consecutive statements in which flow of control enters at the beginning and leaves at the end without halt or 
-     // possibility of branching except at the end
      for(int i=0; i < insts.length; i++) 
      {
          SSAInstruction inst = insts[i];
@@ -253,7 +235,9 @@ public class HadoopAnalyzer_v6 {
 
 
   SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  //SSAInstruction instr = findCallToMethodCall(class1, method1, class2,method2);
+  //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread", "run","Lorg/apache/hadoop/io/SequenceFile$Sorter","merge");
+  //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$MapOutputCopier", "copyOutput","Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread","init");
+  //SSAInstruction instr = findCallToMethodCall(class1, method1,class2,method2);
     
       if (instr != null)
      {
@@ -274,44 +258,57 @@ public class HadoopAnalyzer_v6 {
     nodeCount++;
   }
   
-  System.out.println("Statements Size: " + allStatements.size());
+  System.out.println("Control Statements Size: " + controlStatements.size());
   statementCount = 0;
-  for(SSAInstruction si: allStatements)
+  for(SSAInstruction si: controlStatements)
   {
     Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(si);
     CGNode siNode = (CGNode)contextInfo.val2;
-    IExplodedBasicBlock bb = (IExplodedBasicBlock)contextInfo.val3;
     Statement statement = createStatement(siNode, si);
-    
     if (statement != null)
     {
-      if (!seedControls.containsValue(statement))
-      {
-        statementCount++;
-        seedControls.put(si, statement);
-      }
+        if (!controlStatementDepth.containsKey(statement)) {
+           int cur = controlInstructionDepth.get(si);
+           controlStatementDepth.put(statement, cur); 
+  }
+        if (!seedStatements.contains(statement))
+        {
+          seedStatements.add(statement);
+          statementCount++;
+        }
     }
   }
   
-
+  ThinSlicer ts = new ThinSlicer(cg,pointerAnalysis);
   Integer branchCount = 0;
-  ts = new ThinSlicer(cg,pointerAnalysis);
-
-  for(SSAInstruction s : seedControls.keySet())
+  for(Statement statement: seedStatements)
   {
-      Statement statement = seedControls.get(s);
+      System.out.println("Thin slicing from ");
+      prettyPrint(statement);
+      System.out.println("Depth=" + controlStatementDepth.get(statement));
       branchCount++;
-      if((branchCount < kBranchMin) || (branchCount > kBranchMax))
-      {
-        continue;
+      System.out.println("Branch: " + branchCount + " << ");
+      ArrayList<String> slicesSoFar = new ArrayList<String>();
+      for(int i=0; i<30; i++) {
+         Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,i+1);
+         System.out.println("Slice k=" + (i+1) );
+         dumpSlice(statement, slice, (i+1), slicesSoFar);
       }
-      System.out.println();
-      System.out.println(prettyPrint(s));
-      System.out.println("Branch In Set: " + branchCount + " << ");
-      thinSlice(statement, new HashSet<Statement>());
       System.out.println(" >>");
-      //break;
   }
+
+  System.out.println("Control instruction depth size=" + controlInstructionDepth.size());
+  java.util.Set<String> keys = parameterSlicingDistance.keySet();
+  for(String pName : keys) {
+      System.out.println("Parameter= " + pName);
+      HashMap<Statement, Integer> map =  parameterSlicingDistance.get(pName);
+      java.util.Set<Statement> sts = map.keySet();
+      for(Statement st : sts) {
+          System.out.println("\tReached from statement (control depth= " + controlStatementDepth.get(st) + " slicing depth=" + map.get(st)+ ")");
+          prettyPrint(st);            
+      }
+  }
+  
   
   System.out.println("The max node count is: " + maxNodePerPath);
   System.out.println("The statement count is: " + statementCount);
@@ -323,9 +320,12 @@ public class HadoopAnalyzer_v6 {
 
 }
 
+
+   
+
    private static String prettyPrint(SSAInstruction inst) {
         //if (inst instanceof SSAInvokeInstruction)
-	//  return inst.toString();
+  //  return inst.toString();
         Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(inst);
         int instIndex = ((Integer)contextInfo.val1).intValue();
         CGNode node = (CGNode)contextInfo.val2;        
@@ -343,23 +343,24 @@ public class HadoopAnalyzer_v6 {
     IBytecodeMethod method = (IBytecodeMethod)ir.getMethod();
     IClass decclass =  method.getDeclaringClass();
     int bytecodeIndex = method.getBytecodeIndex(instIndex);
-    int sourceLineNum = method.getLineNumber(bytecodeIndex);  
+    int sourceLineNum = method.getLineNumber(bytecodeIndex);   
     result ="line " + sourceLineNum + " in " + (decclass.getSourceFileName() == null ? decclass.getName() : decclass.getSourceFileName());
     }
     catch(InvalidClassFileException e) {
        System.out.println(e);
        }
     catch(ClassCastException e) {
-	result = "Fake class and method";
+  result = "Fake class and method";
     }
     return result;
   }
   
 
   // Explore this particular node where methods are
-  public static Integer explorePredecessors(Integer parentID, Integer statementCount, Integer kBranchCount, HashSet<IExplodedBasicBlock> visited, CGNode node, IExplodedBasicBlock origBB)
+    public static Integer explorePredecessors(Integer parentID, Integer statementCount, Integer kBranchCount, HashSet<IExplodedBasicBlock> visited, CGNode node, IExplodedBasicBlock origBB)
   {
     SSAInstruction orig = origBB.getInstruction();
+
     Integer myID = parentID + 1;
     if (((kDeep > 0) && (myID > kDeep)) || ((kBranch > 0) && (kBranchCount >= kBranch)))
     {
@@ -371,20 +372,53 @@ public class HadoopAnalyzer_v6 {
       return kBranchCount;
     }
     visited.add(origBB);
-   if (statementCount + 1 > maxStatementCount)
+    if (statementCount + 1 > maxStatementCount)
       maxStatementCount = statementCount + 1; 
-    if (orig != null)
-    {
+
+    ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
+
+
+    if (orig != null )
+  {// only consider the enclosing control statements
       //System.out.println("Visiting " + prettyPrint(orig));
-      allStatements.add(orig);
-      kBranchCount++;
+      if (orig instanceof SSAConditionalBranchInstruction)
+      {
+        SSAConditionalBranchInstruction ci = (SSAConditionalBranchInstruction) orig;
+        controlStatements.add(ci);
+        //System.out.println("Test: " + orig);
+        if (controlInstructionDepth.containsKey(ci)) {
+      int cur = controlInstructionDepth.get(ci);
+            if (kBranchCount < cur) {
+         controlInstructionDepth.remove(ci);
+               controlInstructionDepth.put(ci, kBranchCount);
+      } 
+  }
+        else controlInstructionDepth.put(ci, kBranchCount);
+        kBranchCount++;
+      }
+      
+      if (orig instanceof SSASwitchInstruction)
+      {
+        SSASwitchInstruction si = (SSASwitchInstruction) orig;
+        controlStatements.add(si);
+        //System.out.println("Test: " + orig);
+        if (controlInstructionDepth.containsKey(si)) {
+      int cur = controlInstructionDepth.get(si);
+            if (kBranchCount < cur) {
+         controlInstructionDepth.remove(si);
+               controlInstructionDepth.put(si, kBranchCount);
+      } 
+  }
+        else controlInstructionDepth.put(si, kBranchCount);
+        kBranchCount++;
+      }
     }
       
       // Loop through preds and then call function recursively on each one.. Explores the predecessors
 
       // Finds the call sites of the method
      //System.out.println("\tBasicBlock's node= " + node);
-     ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
+
      if ((graph != null) && (origBB != null))
      {
 
@@ -392,86 +426,32 @@ public class HadoopAnalyzer_v6 {
       //System.out.println("Predecessors=" + preds.size());
       for(IExplodedBasicBlock predBB : preds) 
       {
-            explorePredecessors(myID, statementCount + 1, kBranchCount, new HashSet<IExplodedBasicBlock>(visited), node, predBB);
+
+    explorePredecessors(myID, statementCount + 1, kBranchCount, new HashSet<IExplodedBasicBlock>(visited), node, predBB);
       }
      }
     
     return kBranchCount;
   }
   
-  public static Collection<Statement> thinSlice(Statement st, HashSet<Statement> visitedStatements)
-  {
-    int count = 0;
-    ArrayList<Statement> result = new ArrayList<Statement>();
-    if(visitedStatements.contains(st))
-    {
-      return result;
-    }
-    visitedStatements.add(st);
-    Collection<Statement> slice = ts.computeBackwardThinSlice(st);
-    dumpSlice(st, slice);
-    
-    sliceLoop:
-    {
-      for(Statement str : slice) 
-      {
-        count++;
-        if ((count > kMax) && (kMax > 0))
-        {
-          break sliceLoop;
-        }
-        result.addAll(slice);
-        Collection<Statement> sliceRec = thinSlice(str, new HashSet<Statement>(visitedStatements));
-        if (sliceRec.size() > 0)
-        {
-           result.addAll(sliceRec);
-        }
-      }
-    }
-   return result;
-  }
-  
-  
-  public static SSAInstruction findDef(HashSet<IExplodedBasicBlock> visited, CGNode node, IExplodedBasicBlock origBB, int valueNumber)
-  {
-    SSAInstruction orig = origBB.getInstruction();
-    
-    if (visited.contains(origBB))
-    {
-      //System.out.println("Visited the basic block before!");
-      return null;
-    }
-    visited.add(origBB);
-    
-    if(orig != null)
-    {
-      if (orig.getDef() == valueNumber)
-      {
-        return orig;
-      }
 
-      // Finds the call sites of the method
-     //System.out.println("\tBasicBlock's node= " + node);
-     ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
-     if ((graph != null) && (origBB != null))
-     {
-
-      Collection<IExplodedBasicBlock> preds = graph.getNormalPredecessors(origBB);      
-      //System.out.println("Predecessors=" + preds.size());
-      for(IExplodedBasicBlock predBB : preds) 
-      {
-        SSAInstruction res = findDef(new HashSet<IExplodedBasicBlock>(visited), node, predBB, valueNumber);
-        if (res != null)
-        {
-          return res;
-        }
+    private static void addToMap(HashMap<String, HashMap<Statement, Integer>> map, String key1, Statement key2, int k) {
+        HashMap<Statement, Integer> map2; 
+  if (map.containsKey(key1)) 
+      map2 = map.remove(key1);
+        else map2 = new HashMap<Statement, Integer>();
+        if (map2.containsKey(key2)) {
+      int cur = map2.get(key2);
+            if (k < cur) {
+    System.out.println("Replacing " + cur + " with " + k + " for " + key1);
+         map2.remove(key2);
+               map2.put(key2, k);
       }
-     }
-    }
-    
-    return null;
   }
-  
+        else map2.put(key2, k);
+        map.put(key1, map2); 
+    }
+
     private static void addToSet(HashMap<Object, HashSet<Object>> oneToMany, Object key, Object value) {
         HashSet<Object> set;
         if (oneToMany.containsKey(key))
@@ -485,8 +465,14 @@ public class HadoopAnalyzer_v6 {
     private static void addCallSites(CGNode node, SSAInstruction inst) {
         if (inst instanceof SSAInvokeInstruction) {
             java.util.Set<CGNode> mnodes = cg.getNodes(((SSAInvokeInstruction)inst).getDeclaredTarget());
+                
+            //java.util.Set<CGNode> mnodes = cg.getNodes(((SSAInvokeInstruction)inst).getCallSite().getDeclaredTarget());
+
+            OrdinalSet<? extends InstanceKey> lockSet = OrdinalSet.<InstanceKey>empty();
+            //java.util.Set<CGNode> mnodes = getPossibleNodes(inst);
             for(CGNode n : mnodes) {
-              addToSet(callSites, n, inst);
+                
+                   addToSet(callSites, n, inst);
                 //System.out.println("HOW COME " + prettyPrint(inst) + "\n\t AND" + n.getMethod().getName().toString() + " ARE THE SAME?");
             }
         }
@@ -509,8 +495,8 @@ public class HadoopAnalyzer_v6 {
       return kBranchCount;
     }
     if (current.toString().indexOf("fakeRootMethod") >= 0) return kBranchCount;
-    //System.out.println("Node " + current);
-    //System.out.println("\t Instruction: " + inst); 
+    System.out.println("Node " + current);
+    System.out.println("\t Instruction: " + inst); 
     visited.add(current);
     if (myID > maxNodePerPath)
        maxNodePerPath = myID;    
@@ -525,7 +511,7 @@ public class HadoopAnalyzer_v6 {
 
       for(IExplodedBasicBlock pred : preds)
       {
-        kBranchCount = explorePredecessors(0, 0, kBranchCount, new HashSet<IExplodedBasicBlock>(), current, pred);
+    kBranchCount = explorePredecessors(0, 0, kBranchCount, new HashSet<IExplodedBasicBlock>(), current, pred);
       }
     }
     
@@ -639,12 +625,14 @@ public class HadoopAnalyzer_v6 {
        return null;  
      }
 
+     
+
      IR ir = n.getIR();
      if (ir == null) 
      {
        return null;
      }
-     for (int i = 0; i < ir.getInstructions().length; i++)
+     for (int i=0; i<ir.getInstructions().length; i++)
      {
          SSAInstruction s = ir.getInstructions()[i];
 
@@ -652,60 +640,62 @@ public class HadoopAnalyzer_v6 {
            return new NormalStatement(n, i);
         }
      }
-     System.out.println("Could not locate the instruction in " + n);
+     System.out.println("could not be locate the instruction in " + n);
      return null;
    }
   
-  
-  public static Statement createStatement(CGNode n, IExplodedBasicBlock bb, int valueNumber) 
-  {
-    SSAInstruction sDef = findDef(new HashSet<IExplodedBasicBlock>(), n, bb, valueNumber);
-    
-    if (sDef != null)
-    {
-      IR ir = n.getIR();
-      if (ir == null) 
-      {
-        return null;
-      }
-      for (int i = 0; i < ir.getInstructions().length; i++)
-      {
-          SSAInstruction s = ir.getInstructions()[i];
-          if (s == sDef)
-            return new NormalStatement(n, i);
-      }
-    }
 
-     System.out.println("Could not locate the instruction in " + n);
-     return null;
-   }
-  
-  
-  public static void dumpSlice(Statement seed, Collection<Statement> slice) 
+  static void prettyPrint(Statement s) {
+if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statements
+  int bcIndex, instructionIndex = ((NormalStatement) s).getInstructionIndex();
+  try {
+    bcIndex = ((ShrikeBTMethod) s.getNode().getMethod()).getBytecodeIndex(instructionIndex);
+    try {
+      int src_line_number = s.getNode().getMethod().getLineNumber(bcIndex);
+      System.out.println ( "Source line number = " + src_line_number + " in " + s.getNode().getMethod().getDeclaringClass());
+    } catch (Exception e) {
+      System.out.println("Bytecode index no good");
+      System.out.println(e.getMessage());
+    }
+  } catch (Exception e ) {
+    System.out.println("it's probably not a BT method (e.g. it's a fakeroot method)");
+    System.out.println(e.getMessage());
+  }
+}
+  }  
+
+  //public static void dumpSlice(Statement seed, Collection<Statement> slice) 
+    public static void dumpSlice(Statement seed, Iterator<Statement> slice, int k, ArrayList<String> slicesSoFar) 
   {
-      for (Statement s : slice) 
+      for (; slice.hasNext();) 
       {
+          Statement s = slice.next();
           if (s.getKind() == Statement.Kind.NORMAL_RET_CALLER) // ignore special kinds of statements
           {
              SSAAbstractInvokeInstruction inst = ((NormalReturnCaller)s).getInstruction();
 
-             if (inst.getDeclaredTarget().getName().toString().indexOf("getInt") >= 0 
-	                      && (inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/conf/Configuration") >=0 
-	       || inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/mapred/JobConf") >=0) 
-	       && inst.getDeclaredTarget().getDescriptor().toString().indexOf("Ljava/lang/String;") >= 0) 
+             if ((inst.getDeclaredTarget().getName().toString().indexOf("getInt") >= 0 || 
+                  inst.getDeclaredTarget().getName().toString().indexOf("getBoolean") >=0 || 
+                  inst.getDeclaredTarget().getName().toString().indexOf("getFloat") >=0 || 
+                  inst.getDeclaredTarget().getName().toString().indexOf("getDouble") >=0 ||
+                  inst.getDeclaredTarget().getName().toString().indexOf("getLong") >=0 
+                 ) 
+                        && (inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/conf/Configuration") >=0 
+         || inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/mapred/JobConf") >=0) 
+         && inst.getDeclaredTarget().getDescriptor().toString().indexOf("Ljava/lang/String;") >= 0) 
              //if (inst.getDeclaredTarget().getName().toString().indexOf("getInt") >= 0 
                //  && inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf(filterClass) >=0 
-		 //    && inst.getDeclaredTarget().getDescriptor().toString().indexOf(filterParType) >= 0)
+     //    && inst.getDeclaredTarget().getDescriptor().toString().indexOf(filterParType) >= 0)
              {   
-               //System.out.println();
-               //System.out.println(s);
+               System.out.println();
+               System.out.println(s);
 
              int bcIndex, instructionIndex = ((StatementWithInstructionIndex) s).getInstructionIndex();
              try {
                    bcIndex = ((ShrikeBTMethod) s.getNode().getMethod()).getBytecodeIndex(instructionIndex);
                    try {
                          int src_line_number = s.getNode().getMethod().getLineNumber(bcIndex);
-                         //System.out.println ( "Source line number = " + src_line_number + " in class " + s.getNode().getMethod().getDeclaringClass());
+                         System.out.println ( "Source line number = " + src_line_number + " in class " + s.getNode().getMethod().getDeclaringClass());
                          
                          SymbolTable tbl = s.getNode().getIR().getSymbolTable();
                          for (int i = 0; i < inst.getNumberOfParameters(); i++)
@@ -713,8 +703,13 @@ public class HadoopAnalyzer_v6 {
                            int paramValueNum = inst.getUse(i);
                            if (tbl.isStringConstant(paramValueNum)) 
                            {
-                             String configParam = tbl.getStringValue(paramValueNum);
+             String configParam = tbl.getStringValue(paramValueNum).trim();
                              System.out.println("Configuration Parameters: " + configParam);
+                             if (!slicesSoFar.contains(configParam)) {
+                                parameterControlDistance.put(configParam, controlStatementDepth.get(seed));
+                                addToMap(parameterSlicingDistance, configParam, seed, k);
+                                slicesSoFar.add(configParam);
+           }
                            }
                          }
                    } 

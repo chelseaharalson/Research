@@ -122,9 +122,9 @@ public class HadoopAnalyzer_v3 {
   
   static ArrayList<SSAInstruction> controlStatements = new ArrayList<SSAInstruction>();
   
-  static HashMap<Integer, Statement> seedControls = new HashMap<Integer, Statement>();
-  static HashMap<Integer, Statement> seedLeftControls = new HashMap<Integer, Statement>();
-  static HashMap<Integer, Statement> seedRightControls = new HashMap<Integer, Statement>();
+  static HashMap<SSAInstruction, Statement> seedControls = new HashMap<SSAInstruction, Statement>();
+  static HashMap<SSAInstruction, Statement> seedLeftControls = new HashMap<SSAInstruction, Statement>();
+  static HashMap<SSAInstruction, Statement> seedRightControls = new HashMap<SSAInstruction, Statement>();
 
   static  class Triple<T1, T2, T3> {
 
@@ -268,7 +268,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       if (!seedControls.containsValue(statement))
       {
         statementCount++;
-        seedControls.put(statementCount, statement);
+        seedControls.put(si, statement);
         Statement leftSideStatement = createStatement(siNode, siNode.getDU().getDef(si.getUse(0)));
         Statement rightSideStatement = createStatement(siNode, siNode.getDU().getDef(si.getUse(1)));
         
@@ -276,7 +276,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
         {
           if (!seedLeftControls.containsValue(leftSideStatement))
           {
-            seedLeftControls.put(statementCount, leftSideStatement);
+            seedLeftControls.put(si, leftSideStatement);
           }
         }
         
@@ -285,7 +285,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
         {
           if (!seedRightControls.containsValue(rightSideStatement))
           {
-            seedRightControls.put(statementCount, rightSideStatement);
+            seedRightControls.put(si, rightSideStatement);
           }
         }
       }
@@ -297,32 +297,34 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   Collection<Statement> slice = null;
   Collection<Statement> leftSlice = null;
   Collection<Statement> rightSlice = null;
-  for(int i = 0; i < seedControls.size(); i++)
+  for(SSAInstruction s : seedControls.keySet())
   {
-      Statement statement = seedControls.get(i);
+      Statement statement = seedControls.get(s);
       branchCount++;
       ThinSlicer ts = new ThinSlicer(cg,pointerAnalysis);
       slice = ts.computeBackwardThinSlice(statement);
       System.out.println();
+      System.out.println(prettyPrint(s));
       System.out.println("Branch In Set: " + branchCount + " << ");
       dumpSlice(statement, slice);
       
-      if (seedLeftControls.containsKey(i))
+      if (seedLeftControls.containsKey(s))
       {
-        Statement statementLeft = seedLeftControls.get(i);
-        ThinSlicer tsLeft = new ThinSlicer(cg,pointerAnalysis);
-        leftSlice = tsLeft.computeBackwardThinSlice(statementLeft);
+        Statement statementLeft = seedLeftControls.get(s);
+        //ThinSlicer tsLeft = new ThinSlicer(cg,pointerAnalysis);
+        leftSlice = ts.computeBackwardThinSlice(statementLeft);
         System.out.println("Operand 1's Slice: ** ");
         dumpSlice(statementLeft, leftSlice);
         System.out.println(" **");
       }
       
       
-      if (seedRightControls.containsKey(i))
+      if (seedRightControls.containsKey(s))
       {
-        Statement statementRight = seedRightControls.get(i);
-        ThinSlicer tsRight = new ThinSlicer(cg,pointerAnalysis);
-        rightSlice = tsRight.computeBackwardThinSlice(statementRight);
+        Statement statementRight = seedRightControls.get(s);
+        System.out.println("Right Statement: " + statementRight);
+        //ThinSlicer tsRight = new ThinSlicer(cg,pointerAnalysis);
+        rightSlice = ts.computeBackwardThinSlice(statementRight);
         System.out.println("Operand 2's Slice: ** ");
         dumpSlice(statementRight, rightSlice);
         System.out.println(" **");
@@ -636,15 +638,15 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
                //  && inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf(filterClass) >=0 
 		 //    && inst.getDeclaredTarget().getDescriptor().toString().indexOf(filterParType) >= 0)
              {   
-               System.out.println();
-               System.out.println(s);
+               //System.out.println();
+               //System.out.println(s);
 
              int bcIndex, instructionIndex = ((StatementWithInstructionIndex) s).getInstructionIndex();
              try {
                    bcIndex = ((ShrikeBTMethod) s.getNode().getMethod()).getBytecodeIndex(instructionIndex);
                    try {
                          int src_line_number = s.getNode().getMethod().getLineNumber(bcIndex);
-                         System.out.println ( "Source line number = " + src_line_number + " in class " + s.getNode().getMethod().getDeclaringClass());
+                         //System.out.println ( "Source line number = " + src_line_number + " in class " + s.getNode().getMethod().getDeclaringClass());
                          
                          SymbolTable tbl = s.getNode().getIR().getSymbolTable();
                          for (int i = 0; i < inst.getNumberOfParameters(); i++)
