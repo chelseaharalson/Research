@@ -597,10 +597,35 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
             SSAInvokeInstruction inst2 = (SSAInvokeInstruction) csins;
             CGNode res = (CGNode)instructionContext.get(inst2).val2;
             
-            // Insert new code here
+            // If the current node is a run method of a thread
+            java.util.Iterator<CGNode> predsCG;
+            if (res.getMethod().getName().toString().indexOf("run") >= 0 &&
+                (cha.isSubclassOf(res.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.JavaLangThread)) ||
+                    cha.implementsInterface(res.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
+                        TypeName.string2TypeName("Ljava/lang/Runnable"))))
+               )) {
+              
+                java.util.Set<CGNode> allStartNodesOfInterest = cg.getNodes(MethodReference.
+                    findOrCreate(ClassLoaderReference.Application,"Ljava/lang/Thread","start","()V"));
+                for(CGNode nd : allStartNodesOfInterest) {
+                  Iterator<CGNode> succs = cg.getSuccNodes(nd);
+                  while (succs.hasNext()) {
+                    CGNode threadRun = succs.next();
+                    if (threadRun.getMethod().toString().indexOf(res.getMethod().getDeclaringClass().getName().toString()) >= 0)
+                    {
+                      predsCG = cg.getPredNodes(nd);
+                      for(;predsCG.hasNext();) {
+                         CGNode nn = predsCG.next();
+                         if (nn.toString().indexOf("Application") >= 0)
+                           kBranchCount = explorePredecessorsInterProcedurally(myID, statementCount + maxStatementCount, kBranchCount, new HashSet<CGNode>(visited), res, inst2);
+                      }
+                   }
+                  }
+               }
+            }
             
-            
-            if (inst2.getDeclaredTarget().getName().toString().indexOf(current.getMethod().getName().toString()) >= 0) {
+            // If not a run method, do like normal
+            else if (inst2.getDeclaredTarget().getName().toString().indexOf(current.getMethod().getName().toString()) >= 0) {
                 //System.out.println("COMPARED : " + inst2.getDeclaredTarget().getName().toString() + " VS " + current.getMethod().getName().toString());
                 //System.out.println("\tCall site: " + prettyPrint(inst2) + " in " + res);             
                 kBranchCount = explorePredecessorsInterProcedurally(myID, statementCount + maxStatementCount, kBranchCount, new HashSet<CGNode>(visited), res, inst2);
