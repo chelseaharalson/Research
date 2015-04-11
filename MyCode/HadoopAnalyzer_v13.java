@@ -599,9 +599,9 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
             
             // If the current node is a run method of a thread
             java.util.Iterator<CGNode> predsCG;
-            if (res.getMethod().getName().toString().indexOf("run") >= 0 &&
-                (cha.isSubclassOf(res.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.JavaLangThread)) ||
-                    cha.implementsInterface(res.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
+            if (current.getMethod().getName().toString().indexOf("run") >= 0 &&
+                (cha.isSubclassOf(current.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.JavaLangThread)) ||
+                    cha.implementsInterface(current.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
                         TypeName.string2TypeName("Ljava/lang/Runnable"))))
                )) {
               
@@ -611,7 +611,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
                   Iterator<CGNode> succs = cg.getSuccNodes(nd);
                   while (succs.hasNext()) {
                     CGNode threadRun = succs.next();
-                    if (threadRun.getMethod().toString().indexOf(res.getMethod().getDeclaringClass().getName().toString()) >= 0)
+                    if (threadRun.getMethod().toString().indexOf(current.getMethod().getDeclaringClass().getName().toString()) >= 0)
                     {
                       predsCG = cg.getPredNodes(nd);
                       for(;predsCG.hasNext();) {
