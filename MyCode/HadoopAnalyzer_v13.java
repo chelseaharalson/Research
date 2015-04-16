@@ -13,6 +13,8 @@ import java.util.HashMap;
 
 //import MyCode.AliasedLockOrder.Quad;
 //import MyCode.AliasedLockOrder.Triple;
+import MyCode.HadoopAnalyzer_v12.Triple;
+
 import com.ibm.wala.types.MethodReference;
 import com.ibm.wala.classLoader.IBytecodeMethod;
 import com.ibm.wala.classLoader.IClass;
@@ -590,42 +592,63 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
     
     if (statementCount + maxStatementCount > maxStatementCountAllPaths )
        maxStatementCountAllPaths = statementCount + maxStatementCount;
+    
+    //ArrayList<SSAInstruction> listinst = new ArrayList<SSAInstruction>();
+    //String methodName = current.getMethod().getDeclaringClass();
+    //listinst = findInstructions(current.getMethod().getDeclaringClass(), "start");
+    // If the current node is a run method of a thread
+    java.util.Iterator<CGNode> predsCG;
+    if (current.getMethod().getName().toString().indexOf("run") >= 0 &&
+        (cha.isSubclassOf(current.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.JavaLangThread)) ||
+            cha.implementsInterface(current.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
+                TypeName.string2TypeName("Ljava/lang/Runnable"))))
+       )) {
+        java.util.Set<CGNode> allStartNodesOfInterest = cg.getNodes(MethodReference.
+            findOrCreate(ClassLoaderReference.Application,"Ljava/lang/Thread","start","()V"));
+        for(CGNode nd : allStartNodesOfInterest) { 
+          //System.out.println("NODE@@@ " + nd);
+          Iterator<CGNode> succs = cg.getSuccNodes(nd);
+          while (succs.hasNext()) {
+            CGNode threadRun = succs.next();
+            if (threadRun.getMethod().toString().indexOf(current.getMethod().getDeclaringClass().getName().toString()) >= 0)
+            {
+              HashSet<Object> csites = callSites.get(nd);
+              if (csites != null) {
+                for(Object csins: csites) {
+                  
+                  Triple<Integer, CGNode, IExplodedBasicBlock> contextInf = instructionContext.get(csins);
+                  CGNode siNode = (CGNode)contextInf.val2;
+                  
+                  SSAInvokeInstruction inst3 = (SSAInvokeInstruction) csins;
+                  predsCG = cg.getPredNodes(nd);
+                  for(;predsCG.hasNext();) {
+                     CGNode nn = predsCG.next();
+                     
+                     if (nn == siNode) {
+                       if (nn.toString().indexOf("Application") >= 0)
+                         kBranchCount = explorePredecessorsInterProcedurally(myID, statementCount + maxStatementCount, kBranchCount, new HashSet<CGNode>(visited), nn, inst3);
+                     }
+                    
+                  }
+                }
+              }
+              /*predsCG = cg.getPredNodes(nd);
+              for(;predsCG.hasNext();) {
+                 CGNode nn = predsCG.next();
+                 if (nn.toString().indexOf("Application") >= 0)
+                   kBranchCount = explorePredecessorsInterProcedurally(myID, statementCount + maxStatementCount, kBranchCount, new HashSet<CGNode>(visited), nn, inst3);
+              }*/
+           }
+          }
+       }
+    }
       
     HashSet<Object> csites = callSites.get(current);
     if (csites != null) {
         for(Object csins: csites) {
             SSAInvokeInstruction inst2 = (SSAInvokeInstruction) csins;
             CGNode res = (CGNode)instructionContext.get(inst2).val2;
-            
-            // If the current node is a run method of a thread
-            java.util.Iterator<CGNode> predsCG;
-            if (current.getMethod().getName().toString().indexOf("run") >= 0 &&
-                (cha.isSubclassOf(current.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.JavaLangThread)) ||
-                    cha.implementsInterface(current.getMethod().getDeclaringClass(), cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
-                        TypeName.string2TypeName("Ljava/lang/Runnable"))))
-               )) {
-              
-                java.util.Set<CGNode> allStartNodesOfInterest = cg.getNodes(MethodReference.
-                    findOrCreate(ClassLoaderReference.Application,"Ljava/lang/Thread","start","()V"));
-                for(CGNode nd : allStartNodesOfInterest) {
-                  Iterator<CGNode> succs = cg.getSuccNodes(nd);
-                  while (succs.hasNext()) {
-                    CGNode threadRun = succs.next();
-                    if (threadRun.getMethod().toString().indexOf(current.getMethod().getDeclaringClass().getName().toString()) >= 0)
-                    {
-                      predsCG = cg.getPredNodes(nd);
-                      for(;predsCG.hasNext();) {
-                         CGNode nn = predsCG.next();
-                         if (nn.toString().indexOf("Application") >= 0)
-                           kBranchCount = explorePredecessorsInterProcedurally(myID, statementCount + maxStatementCount, kBranchCount, new HashSet<CGNode>(visited), res, inst2);
-                      }
-                   }
-                  }
-               }
-            }
-            
-            // If not a run method, do like normal
-            else if (inst2.getDeclaredTarget().getName().toString().indexOf(current.getMethod().getName().toString()) >= 0) {
+            if (inst2.getDeclaredTarget().getName().toString().indexOf(current.getMethod().getName().toString()) >= 0) {
                 //System.out.println("COMPARED : " + inst2.getDeclaredTarget().getName().toString() + " VS " + current.getMethod().getName().toString());
                 //System.out.println("\tCall site: " + prettyPrint(inst2) + " in " + res);             
                 kBranchCount = explorePredecessorsInterProcedurally(myID, statementCount + maxStatementCount, kBranchCount, new HashSet<CGNode>(visited), res, inst2);
@@ -635,6 +658,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       
     return kBranchCount;
   }
+  
 
     private static SSAInstruction findCallToMethodCall(String className, String methodName, String targetCl, String targetMt) throws InvalidClassFileException {
         System.out.println("Searching for instruction " + targetCl + "." + targetMt + "in " + className + "." + methodName);
@@ -717,6 +741,32 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
      }
      //Assertions.UNREACHABLE("failed to find call to " + methodName + " in " + n);
      return null;
+   }
+  
+  
+  private static ArrayList<SSAInstruction> findInstructions(String className, String methodName) throws InvalidClassFileException {
+    System.out.println("Searching for instruction " + className + "." + methodName);
+    ArrayList<SSAInstruction> listInst = new ArrayList<SSAInstruction>();
+    for(CGNode node: icfg.getCallGraph()) {
+        if (node.getMethod().getDeclaringClass().getName().toString().indexOf(className) >= 0) {
+            //System.out.println("Candidate class=" + node.getMethod().getDeclaringClass().getName().toString());
+            //System.out.println("Is " + node.getMethod().getName().toString() + " what we're looking for?");
+            if (node.getMethod().getName().toString().indexOf(methodName) >= 0) {
+                //System.out.println("Candidate method=" + node.getMethod().getName().toString());
+                IR ir = node.getIR();
+                if (ir == null) continue;
+                SSAInstruction[] insts = ir.getInstructions();
+                for(int i=0; i < insts.length; i++) {
+                    if (insts[i] instanceof SSAInvokeInstruction) {
+                      listInst.add(insts[i]);
+                      return listInst;
+                    }
+                }
+            }
+        }
+    }
+    
+    return null;
    }
   
   
