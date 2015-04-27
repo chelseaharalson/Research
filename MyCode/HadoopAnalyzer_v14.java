@@ -263,7 +263,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   //SSAInstruction instr = findCallToMethodCall(class1, method1,class2,method2);
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/MapTask$MapOutputBuffer", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  
+  getAllSrc(scopeFile);
   for (SSAInstruction in : allSrcInst) {
      SSAInstruction instr = in;
      if (instr != null)
@@ -694,11 +694,11 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       IClassHierarchy icha = ClassHierarchy.make(scope);
       for (IClass c : icha) {
         String className = c.getName().toString();
-        System.out.println("Added class: " +className);
+        //System.out.println("Added class: " + className);
         allSrcClasses.add(c);
         for (IMethod m : c.getAllMethods()) {
           String methodName = m.getName().toString();
-          System.out.println("Added method: " + methodName);
+          //System.out.println("Added method: " + methodName);
           allSrcMethods.add(m);
         }
       }
