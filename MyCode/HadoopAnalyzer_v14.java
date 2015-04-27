@@ -693,6 +693,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, HadoopAnalyzer.class.getClassLoader());
       IClassHierarchy icha = ClassHierarchy.make(scope);
       for (IClass c : icha) {
+        if (!scope.isApplicationLoader(c.getClassLoader())) continue;
         String className = c.getName().toString();
         //System.out.println("Added class: " + className);
         allSrcClasses.add(c);
