@@ -105,6 +105,7 @@ public class HadoopAnalyzer_v14 {
   static String targetClassNames;
   static String mainClass;
   static String entryClass;
+  static String className;
   static String exclusionsFile;
   static CallGraphBuilder builder;
   static IClassHierarchy cha;
@@ -139,7 +140,8 @@ public class HadoopAnalyzer_v14 {
   static ArrayList<IClass> allSrcClasses = new  ArrayList<IClass>();
   static ArrayList<IMethod> allSrcMethods = new  ArrayList<IMethod>();
   static ArrayList<SSAInstruction> allSrcInst = new  ArrayList<SSAInstruction>();
-  //static HashMap<CGNode, SSAInstruction> allSrcStatements = new HashMap<CGNode, SSAInstruction>();
+  static HashMap<Statement, String> relevantTS = new HashMap<Statement, String>();
+  static ArrayList<String> allClasses = new  ArrayList<String>();
 
   static  class Triple<T1, T2, T3> {
 
@@ -214,7 +216,8 @@ public class HadoopAnalyzer_v14 {
 System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
 
   System.out.println("building call graph...");
-  configureAndCreateCallGraph(scopeFile, mainClass, entryClass); 
+  className = collectAllClasses(scopeFile);
+  configureAndCreateCallGraph(scopeFile, mainClass, className); 
 
 //  CallGraphBuilder builder = Util.makeNCFABuilder(2, options, cache, cha, scope);
 //  CallGraphBuilder builder = Util.makeVanillaNCFABuilder(2, options, cache, cha, scope);
@@ -279,8 +282,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
          //seedInstrCount++;
          //System.out.println("Seed Instruction Count: " + seedInstrCount);
          // Collect reachable nodes up to depth 
-         int subgraphHeight = 4;
-         collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
+         //int subgraphHeight = 4;
+         //collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
      }
   }
   
@@ -688,6 +691,18 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
         return null;
     }
     
+    private static String collectAllClasses(String scopeFile) throws IOException, ClassHierarchyException {
+      File exclusionsFile = null;
+      AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, HadoopAnalyzer.class.getClassLoader());
+      cha = ClassHierarchy.make(scope);
+      String cname = "";
+      for (IClass c : cha) {
+        if (!scope.isApplicationLoader(c.getClassLoader())) continue;
+        cname += c.getName().toString() + ";";
+      }
+      return cname;
+    }
+    
     private static ArrayList<SSAInstruction> getAllSrc(String scopeFile) throws IOException, ClassHierarchyException {
       File exclusionsFile = null;
       AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, HadoopAnalyzer.class.getClassLoader());
@@ -697,17 +712,18 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
         String className = c.getName().toString();
         //System.out.println("Added class: " + className);
         allSrcClasses.add(c);
-        for (IMethod m : c.getAllMethods()) {
-          String methodName = m.getName().toString();
+        //for (IMethod m : c.getAllMethods()) {
+        //  String methodName = m.getName().toString();
           //System.out.println("Added method: " + methodName);
-          allSrcMethods.add(m);
-        }
+          makePublicEntrypoints(scope, icha, className);
+          //allSrcMethods.add(m);
+        //}
       }
       
       for (CGNode node : icfg.getCallGraph()) {
-        for (IMethod me : allSrcMethods) {
-          String mName = me.getName().toString();
-          if (node.getMethod().getName().toString().indexOf(mName) >= 0) {
+        //for (IMethod me : allSrcMethods) {
+          //String mName = me.getName().toString();
+          //if (node.getMethod().getName().toString().indexOf(mName) >= 0) {
            //System.out.println("Candidate method=" + node.getMethod().getName().toString());
             IR ir = node.getIR();
             if (ir == null) continue;
@@ -715,8 +731,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
             for(int i=0; i < insts.length; i++) {
               allSrcInst.add(insts[i]);
             }
-          }
-        }
+          //}
+        //}
       }
       return allSrcInst;
     }
@@ -896,6 +912,7 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
                                 parameterControlDistance.put(configParam, controlStatementDepth.get(seed));
                                 addToMap(parameterSlicingDistance, configParam, seed, k);
                                 slicesSoFar.add(configParam);
+                                relevantTS.put(seed, configParam);
            }
                            }
                          }
@@ -1009,7 +1026,6 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
     cg = builder.makeCallGraph(options, null);
 
 }
-
   
   private static Iterable<Entrypoint> makePublicEntrypoints(AnalysisScope scope, IClassHierarchy cha, String entryClass) 
   {
