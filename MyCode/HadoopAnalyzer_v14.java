@@ -105,7 +105,7 @@ public class HadoopAnalyzer_v14 {
   static String targetClassNames;
   static String mainClass;
   static String entryClass;
-  static String className;
+  static String eClass;
   static String exclusionsFile;
   static CallGraphBuilder builder;
   static IClassHierarchy cha;
@@ -216,8 +216,8 @@ public class HadoopAnalyzer_v14 {
 System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
 
   System.out.println("building call graph...");
-  className = collectAllClasses(scopeFile);
-  configureAndCreateCallGraph(scopeFile, mainClass, className); 
+  eClass = collectAllClasses(scopeFile);
+  configureAndCreateCallGraph(scopeFile, mainClass, eClass); 
 
 //  CallGraphBuilder builder = Util.makeNCFABuilder(2, options, cache, cha, scope);
 //  CallGraphBuilder builder = Util.makeVanillaNCFABuilder(2, options, cache, cha, scope);
@@ -266,25 +266,27 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   //SSAInstruction instr = findCallToMethodCall(class1, method1,class2,method2);
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/MapTask$MapOutputBuffer", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  getAllSrc(scopeFile);
-  for (SSAInstruction in : allSrcInst) {
-     SSAInstruction instr = in;
-     if (instr != null)
-     {
-        System.out.println("Found the seed instruction: " + prettyPrint(instr));
-         seedInstr.add(instr);
-         // Add the target statement as if it is a control statement too.. 
-         controlStatements.add(instr);
-         Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(instr);
-         CGNode siNode = (CGNode)contextInfo.val2;
-         Statement statement = createStatement(siNode, instr);
-         controlStatementDepth.put(statement, 0);
-         //seedInstrCount++;
-         //System.out.println("Seed Instruction Count: " + seedInstrCount);
-         // Collect reachable nodes up to depth 
-         //int subgraphHeight = 4;
-         //collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
-     }
+  //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
+  
+  
+  for (SSAInstruction instr : instructionContext.keySet())
+  {
+    if (instr != null)
+    {
+      System.out.println("Found the seed instruction: " + prettyPrint(instr));
+       seedInstr.add(instr);
+       // Add the target statement as if it is a control statement too.. 
+       controlStatements.add(instr);
+       Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(instr);
+       CGNode siNode = (CGNode)contextInfo.val2;
+       Statement statement = createStatement(siNode, instr);
+       controlStatementDepth.put(statement, 0);
+       //seedInstrCount++;
+       //System.out.println("Seed Instruction Count: " + seedInstrCount);
+       // Collect reachable nodes up to depth 
+       //int subgraphHeight = 4;
+       //collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
+    }
   }
   
 
