@@ -273,10 +273,10 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/MapTask$MapOutputBuffer", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
+  //SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
   
-  //for (SSAInstruction instr : instructionContext.keySet())
-  //{
+  for (SSAInstruction instr : instructionContext.keySet())
+  {
     if (instr != null)
     {
       System.out.println("Found the seed instruction: " + prettyPrint(instr));
@@ -293,7 +293,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
        int subgraphHeight = 4;
        collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
     }
-  //}
+  }
   
 
   nodeCount = 0;
@@ -356,6 +356,23 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
             System.out.println("\tReached from statement (control depth= " + controlStatementDepth.get(st) + " slicing depth=" + map.get(st) + ")");
             prettyPrint(st);  
       }
+  }
+  
+  int size = relevantTS.size();
+  String[][] RM = new String[size][size];
+  int TS = 0;
+  int CP = 0;
+  for (Statement sd : relevantTS.keySet()) {
+    for (String configParam : relevantTS.values()) {
+        if (relevantTS.containsValue(configParam)) {
+          RM[TS][CP] = "True";
+        }
+        else {
+          RM[TS][CP] = "False";
+        }
+        TS++;
+        CP++;
+    }
   }
   
   
@@ -700,6 +717,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
     }
     
     private static String collectAllClasses(String scopeFile) throws IOException, ClassHierarchyException {
+      //File exclusionsFile = new File("/home/chelseametcalf/workspace/exclusions.txt");
       File exclusionsFile = null;
       AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, HadoopAnalyzer.class.getClassLoader());
       cha = ClassHierarchy.make(scope);
@@ -951,6 +969,7 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
   }
   
   private static void configureAndCreateCallGraph(String scopeFile, String mainClass, String entryClass) throws IOException, ClassHierarchyException, CallGraphBuilderCancelException  {
+    //File exclusionsFile = new File("/home/chelseametcalf/workspace/exclusions.txt");
     File exclusionsFile = null;
     AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, HadoopAnalyzer.class.getClassLoader()); 
     cha = ClassHierarchy.make(scope);
