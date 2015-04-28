@@ -105,7 +105,7 @@ public class HadoopAnalyzer_v14 {
   static String targetClassNames;
   static String mainClass;
   static String entryClass;
-  static String eClass;
+  //static String eClass;
   static String exclusionsFile;
   static CallGraphBuilder builder;
   static IClassHierarchy cha;
@@ -116,6 +116,7 @@ public class HadoopAnalyzer_v14 {
   static Integer kDeep;
   static Integer kBranch;
   static Integer kDepth;
+  static Integer kControlDepth;
   static Integer nodeCount;
   static int maxNodePerPath = 0;
   static int maxStatementCount = 0;
@@ -176,7 +177,8 @@ public class HadoopAnalyzer_v14 {
   long start = System.currentTimeMillis();
   Properties p = CommandLine.parse(args);
   String scopeFile = p.getProperty("scopeFile");
-  entryClass = p.getProperty("entryClass");
+  //entryClass = p.getProperty("entryClass");
+  entryClass = collectAllClasses(scopeFile);
   mainClass = p.getProperty("mainClass");
   targetClassNames = p.getProperty("targetClassNames");
   exclusionsFile = p.getProperty("exclusionsFile");
@@ -197,7 +199,12 @@ public class HadoopAnalyzer_v14 {
    else
      kDepth = Integer.parseInt(p.getProperty("kDepth"));
    
-   System.out.println("kDepth=" + kDepth);
+   if (p.getProperty("kControlDepth") == null)
+     kControlDepth = 0;
+   else
+     kControlDepth = Integer.parseInt(p.getProperty("kControlDepth"));
+   
+   System.out.println("kSliceDepth=" + kDepth + " kControlDepth=" + kControlDepth);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
@@ -216,8 +223,7 @@ public class HadoopAnalyzer_v14 {
 System.out.println("WARNING: Analysis could be more efficient by specifying a semicolon separated list of target classes (excluding mainClass and entryClass) with -targetClassNames option (use / instead of . in class names)"); 
 
   System.out.println("building call graph...");
-  eClass = collectAllClasses(scopeFile);
-  configureAndCreateCallGraph(scopeFile, mainClass, eClass); 
+  configureAndCreateCallGraph(scopeFile, mainClass, entryClass); 
 
 //  CallGraphBuilder builder = Util.makeNCFABuilder(2, options, cache, cha, scope);
 //  CallGraphBuilder builder = Util.makeVanillaNCFABuilder(2, options, cache, cha, scope);
@@ -267,10 +273,10 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/MapTask$MapOutputBuffer", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
+  SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
   
-  
-  for (SSAInstruction instr : instructionContext.keySet())
-  {
+  //for (SSAInstruction instr : instructionContext.keySet())
+  //{
     if (instr != null)
     {
       System.out.println("Found the seed instruction: " + prettyPrint(instr));
@@ -284,10 +290,10 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
        //seedInstrCount++;
        //System.out.println("Seed Instruction Count: " + seedInstrCount);
        // Collect reachable nodes up to depth 
-       //int subgraphHeight = 4;
-       //collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
+       int subgraphHeight = 4;
+       collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
     }
-  }
+  //}
   
 
   nodeCount = 0;
@@ -346,10 +352,12 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       System.out.println("Parameter= " + pName);
       HashMap<Statement, Integer> map =  parameterSlicingDistance.get(pName);
       java.util.Set<Statement> sts = map.keySet();
-      for(Statement st : sts) {
-            System.out.println("\tReached from statement (control depth= " + controlStatementDepth.get(st) + " slicing depth=" + map.get(st) + ")");
-            prettyPrint(st);  
-      }
+      //for (int i = 0; i < kControlDepth; i++) {
+        for(Statement st : sts) {
+              System.out.println("\tReached from statement (control depth= " + controlStatementDepth.get(st) + " slicing depth=" + map.get(st) + ")");
+              prettyPrint(st);  
+        }
+      //}
   }
   
   
@@ -702,42 +710,17 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
         if (!scope.isApplicationLoader(c.getClassLoader())) continue;
         cname += c.getName().toString() + ";";
       }
+      cname = removeLastSemicolon(cname);
+      //System.out.println(cname);
       return cname;
     }
     
-    private static ArrayList<SSAInstruction> getAllSrc(String scopeFile) throws IOException, ClassHierarchyException {
-      File exclusionsFile = null;
-      AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, HadoopAnalyzer.class.getClassLoader());
-      IClassHierarchy icha = ClassHierarchy.make(scope);
-      for (IClass c : icha) {
-        if (!scope.isApplicationLoader(c.getClassLoader())) continue;
-        String className = c.getName().toString();
-        //System.out.println("Added class: " + className);
-        allSrcClasses.add(c);
-        //for (IMethod m : c.getAllMethods()) {
-        //  String methodName = m.getName().toString();
-          //System.out.println("Added method: " + methodName);
-          makePublicEntrypoints(scope, icha, className);
-          //allSrcMethods.add(m);
-        //}
+    public static String removeLastSemicolon(String str) {
+      if (str.length() > 0 && str.charAt(str.length()-1)==';') {
+        str = str.substring(0, str.length()-1);
       }
-      
-      for (CGNode node : icfg.getCallGraph()) {
-        //for (IMethod me : allSrcMethods) {
-          //String mName = me.getName().toString();
-          //if (node.getMethod().getName().toString().indexOf(mName) >= 0) {
-           //System.out.println("Candidate method=" + node.getMethod().getName().toString());
-            IR ir = node.getIR();
-            if (ir == null) continue;
-            SSAInstruction[] insts = ir.getInstructions();
-            for(int i=0; i < insts.length; i++) {
-              allSrcInst.add(insts[i]);
-            }
-          //}
-        //}
-      }
-      return allSrcInst;
-    }
+      return str;
+  }
 
   
     private static SSAInstruction findCallToInstrAtLine(String className, String methodName, int lineNo) throws InvalidClassFileException {
