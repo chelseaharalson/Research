@@ -1,0 +1,1 @@
+-exclusionsFile "exclusions.txt" -scopeFile /home/chelseametcalf/workspace/scope1.txt -kSliceDepth "10" -kControlDepth "2"

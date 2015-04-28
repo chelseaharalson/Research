@@ -109,8 +109,7 @@ public class HadoopAnalyzer_v13_test {
   static PointerAnalysis pointerAnalysis; 
   static HeapModel heapModel;
   static Integer kDeep;
-  static Integer kBranch;
-  static Integer kDepth;
+  static Integer kSliceDepth;
   static Integer kControlDepth;
   static Integer nodeCount;
   static int maxNodePerPath = 0;
@@ -175,24 +174,19 @@ public class HadoopAnalyzer_v13_test {
   else
     kDeep = Integer.parseInt(p.getProperty("kDeep"));
   
-  if (p.getProperty("kBranch") == null)
-    kBranch = 0;
-  else
-    kBranch = Integer.parseInt(p.getProperty("kBranch"));
-  
-   System.out.println("kDeep=" + kDeep + " kBranch=" + kBranch);
+   System.out.println("kDeep=" + kDeep);
    
-   if (p.getProperty("kDepth") == null)
-     kDepth = 30;
+   if (p.getProperty("kSliceDepth") == null)
+     kSliceDepth = 30;
    else
-     kDepth = Integer.parseInt(p.getProperty("kDepth"));
+     kSliceDepth = Integer.parseInt(p.getProperty("kSliceDepth"));
    
    if (p.getProperty("kControlDepth") == null)
      kControlDepth = 0;
    else
      kControlDepth = Integer.parseInt(p.getProperty("kControlDepth"));
    
-   System.out.println("kSliceDepth=" + kDepth + " kControlDepth=" + kControlDepth);
+   System.out.println("kSliceDepth=" + kSliceDepth + " kControlDepth=" + kControlDepth);
 
   pType = p.getProperty("pointerAnalysis"); 
   if (pType == null)
@@ -323,7 +317,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       branchCount++;
       System.out.println("Branch: " + branchCount + " << ");
       ArrayList<String> slicesSoFar = new ArrayList<String>();
-      for(int i=0; i < kDepth; i++) {
+      for(int i=0; i < kSliceDepth; i++) {
          Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,i+1);
          System.out.println("Slice k=" + (i+1) );
          dumpSlice(statement, slice, (i+1), slicesSoFar);
@@ -430,7 +424,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
     SSAInstruction orig = origBB.getInstruction();
 
     Integer myID = parentID + 1;
-    if (((kDeep > 0) && (myID > kDeep)) || ((kBranch > 0) && (kBranchCount >= kBranch)))
+    if (((kDeep > 0) && (myID > kDeep)) || ((kControlDepth > 0) && (kBranchCount >= kControlDepth)))
+    //if (((kDeep > 0) && (myID > kDeep)) || ((kBranch > 0) && (kBranchCount >= kBranch)))
     {
       return kBranchCount;
     }
@@ -562,7 +557,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   {
     
     Integer myID = parentID + 1;
-    if (((kDeep > 0) && (myID > kDeep)) || ((kBranch > 0) && (kBranchCount >= kBranch)))
+    if (((kDeep > 0) && (myID > kDeep)) || ((kControlDepth > 0) && (kBranchCount >= kControlDepth)))
     {
       return kBranchCount;
     }
@@ -862,11 +857,9 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
                              String configParam = tbl.getStringValue(paramValueNum).trim();
                              System.out.println("Configuration Parameter: " + configParam);
                              if (!slicesSoFar.contains(configParam)) {
-                                if (controlStatementDepth.get(seed) <= kControlDepth) {
                                   parameterControlDistance.put(configParam, controlStatementDepth.get(seed));
                                   addToMap(parameterSlicingDistance, configParam, seed, k);
                                   slicesSoFar.add(configParam);
-                               }
                              }
                            }
                          }
