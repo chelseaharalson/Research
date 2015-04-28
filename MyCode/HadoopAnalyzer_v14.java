@@ -352,12 +352,10 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
       System.out.println("Parameter= " + pName);
       HashMap<Statement, Integer> map =  parameterSlicingDistance.get(pName);
       java.util.Set<Statement> sts = map.keySet();
-      //for (int i = 0; i < kControlDepth; i++) {
-        for(Statement st : sts) {
-              System.out.println("\tReached from statement (control depth= " + controlStatementDepth.get(st) + " slicing depth=" + map.get(st) + ")");
-              prettyPrint(st);  
-        }
-      //}
+      for(Statement st : sts) {
+            System.out.println("\tReached from statement (control depth= " + controlStatementDepth.get(st) + " slicing depth=" + map.get(st) + ")");
+            prettyPrint(st);  
+      }
   }
   
   
@@ -894,11 +892,13 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
                              String configParam = tbl.getStringValue(paramValueNum).trim();
                              System.out.println("Configuration Parameters: " + configParam);
                              if (!slicesSoFar.contains(configParam)) {
-                                parameterControlDistance.put(configParam, controlStatementDepth.get(seed));
-                                addToMap(parameterSlicingDistance, configParam, seed, k);
-                                slicesSoFar.add(configParam);
-                                relevantTS.put(seed, configParam);
-           }
+                               if (controlStatementDepth.get(seed) <= kControlDepth) {
+                                 parameterControlDistance.put(configParam, controlStatementDepth.get(seed));
+                                 addToMap(parameterSlicingDistance, configParam, seed, k);
+                                 slicesSoFar.add(configParam);
+                                 relevantTS.put(seed, configParam);
+                               }
+                             }
                            }
                          }
                    } 
