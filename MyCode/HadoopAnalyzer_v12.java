@@ -130,7 +130,7 @@ public class HadoopAnalyzer_v12 {
   
   static ArrayList<SSAInstruction> controlStatements = new ArrayList<SSAInstruction>();
 
-    static ArrayList<IClass> entryClasses = new  ArrayList<IClass>();
+  static ArrayList<IClass> entryClasses = new  ArrayList<IClass>();
 
   static  class Triple<T1, T2, T3> {
 

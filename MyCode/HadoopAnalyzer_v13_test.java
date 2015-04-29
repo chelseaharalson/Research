@@ -252,8 +252,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread", "run","Lorg/apache/hadoop/io/SequenceFile$Sorter","merge");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$MapOutputCopier", "copyOutput","Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread","init");
   //SSAInstruction instr = findCallToMethodCall(class1, method1,class2,method2);
-  SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  //SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
+  //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
+  SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
   
       if (instr != null)
      {
@@ -268,8 +268,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
          //seedInstrCount++;
          //System.out.println("Seed Instruction Count: " + seedInstrCount);
          // Collect reachable nodes up to depth 
-         int subgraphHeight = 4;
-         collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
+         //int subgraphHeight = 4;
+         //collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
      }
   
 
@@ -659,7 +659,7 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   
 
     private static SSAInstruction findCallToMethodCall(String className, String methodName, String targetCl, String targetMt) throws InvalidClassFileException {
-        System.out.println("Searching for instruction " + targetCl + "." + targetMt + "in " + className + "." + methodName);
+        System.out.println("Searching for instruction " + targetCl + "." + targetMt + " in " + className + "." + methodName);
         for(CGNode node: icfg.getCallGraph()) {
             //System.out.println("class=" + node.getMethod().getDeclaringClass().getName().toString() + " method=" + node.getMethod());      
             if (node.getMethod().getDeclaringClass().getName().toString().indexOf(className) >= 0) {
