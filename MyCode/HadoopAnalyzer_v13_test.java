@@ -252,8 +252,8 @@ System.out.println("WARNING: Analysis could be more efficient by specifying a se
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread", "run","Lorg/apache/hadoop/io/SequenceFile$Sorter","merge");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$MapOutputCopier", "copyOutput","Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread","init");
   //SSAInstruction instr = findCallToMethodCall(class1, method1,class2,method2);
-  //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
+  SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
+  //SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
   
       if (instr != null)
      {
