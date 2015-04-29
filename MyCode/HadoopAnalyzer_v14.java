@@ -289,18 +289,20 @@ public class HadoopAnalyzer_v14 {
   {
     Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(si);
     CGNode siNode = (CGNode)contextInfo.val2;
-    Statement statement = createStatement(siNode, si);
-    if (statement != null)
-    {
-        if (!controlStatementDepth.containsKey(statement)) {
-           int cur = controlInstructionDepth.get(si);
-           controlStatementDepth.put(statement, cur); 
-        }
-        if (!seedStatements.contains(statement))
-        {
-          seedStatements.add(statement);
-          statementCount++;
-        }
+    if (siNode.toString().indexOf("Application") >= 0) {
+      Statement statement = createStatement(siNode, si);
+      if (statement != null)
+      {
+          if (!controlStatementDepth.containsKey(statement)) {
+             int cur = controlInstructionDepth.get(si);
+             controlStatementDepth.put(statement, cur); 
+          }
+          if (!seedStatements.contains(statement))
+          {
+            seedStatements.add(statement);
+            statementCount++;
+          }
+      }
     }
   }
   
@@ -505,7 +507,7 @@ public class HadoopAnalyzer_v14 {
       //System.out.println("Predecessors=" + preds.size());
       for(IExplodedBasicBlock predBB : preds) 
       {
-        explorePredecessors(myID, statementCount + 1, kBranchCount, new HashSet<IExplodedBasicBlock>(visited), node, predBB);
+          explorePredecessors(myID, statementCount + 1, kBranchCount, new HashSet<IExplodedBasicBlock>(visited), node, predBB);
       }
      }
      
@@ -566,7 +568,7 @@ public class HadoopAnalyzer_v14 {
 
   
   // Interprocedural control-flow analysis.. get to the next node where the method is called
-  public static Integer explorePredecessorsInterProcedurally(Integer parentID, Integer statementCount, Integer kBranchCount, HashSet<CGNode> visited, CGNode current, SSAInstruction inst)
+  public static Integer explorePredecessorsInterProcedurally(Integer parentID, Integer statementCount, Integer kBranchCount, HashSet<CGNode> visited, CGNode current, SSAInstruction inst) throws IOException
   {
     
     Integer myID = parentID + 1;
@@ -591,22 +593,26 @@ public class HadoopAnalyzer_v14 {
     //CGNode node = (CGNode)contextInfo.val2;
     IExplodedBasicBlock bb = (IExplodedBasicBlock)contextInfo.val3;
     ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(current);
+
     if ((graph != null) && (bb != null))
     {
       Collection<IExplodedBasicBlock> preds = graph.getNormalPredecessors(bb);
 
       for(IExplodedBasicBlock pred : preds)
       {
-        kBranchCount = explorePredecessors(0, 0, kBranchCount, new HashSet<IExplodedBasicBlock>(), current, pred);
+        if (current.toString().indexOf("Application") >= 0) {
+          //System.out.println("CURRENT: " + current);
+          kBranchCount = explorePredecessors(0, 0, kBranchCount, new HashSet<IExplodedBasicBlock>(), current, pred);
+        }
+        else {
+          return kBranchCount;
+        }
       }
     }
     
     if (statementCount + maxStatementCount > maxStatementCountAllPaths )
        maxStatementCountAllPaths = statementCount + maxStatementCount;
     
-    //ArrayList<SSAInstruction> listinst = new ArrayList<SSAInstruction>();
-    //String methodName = current.getMethod().getDeclaringClass();
-    //listinst = findInstructions(current.getMethod().getDeclaringClass(), "start");
     // If the current node is a run method of a thread
     java.util.Iterator<CGNode> predsCG;
     if (current.getMethod().getName().toString().indexOf("run") >= 0 &&
@@ -617,7 +623,6 @@ public class HadoopAnalyzer_v14 {
         java.util.Set<CGNode> allStartNodesOfInterest = cg.getNodes(MethodReference.
             findOrCreate(ClassLoaderReference.Application,"Ljava/lang/Thread","start","()V"));
         for(CGNode nd : allStartNodesOfInterest) { 
-          //System.out.println("NODE@@@ " + nd);
           Iterator<CGNode> succs = cg.getSuccNodes(nd);
           while (succs.hasNext()) {
             CGNode threadRun = succs.next();
