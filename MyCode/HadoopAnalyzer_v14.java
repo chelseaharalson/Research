@@ -318,6 +318,13 @@ public class HadoopAnalyzer_v14 {
       ArrayList<String> slicesSoFar = new ArrayList<String>();
       Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,kSliceDepth+1);
       dumpSlice(statement, slice, (kSliceDepth+1), slicesSoFar);
+      /*
+        for(int i=0; i < kSliceDepth; i++) {
+         Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,i+1);
+         System.out.println("Slice k=" + (i+1) );
+         dumpSlice(statement, slice, (i+1), slicesSoFar);
+      }
+       */
       System.out.println(" >>");
   }
 
@@ -333,22 +340,25 @@ public class HadoopAnalyzer_v14 {
       }
   }
   
-  /*int size = relevantTS.size();
+  int size = relevantTS.size();
+  System.out.println("Relevant TS size: " + size);
   String[][] RM = new String[size][size];
   int TS = 0;
   int CP = 0;
   for (Statement sd : relevantTS.keySet()) {
     for (String configParam : relevantTS.values()) {
+        System.out.println(configParam + "\t");
         if (relevantTS.containsValue(configParam)) {
           RM[TS][CP] = "True";
         }
         else {
           RM[TS][CP] = "False";
         }
+        System.out.println(sd + "\t" + RM[TS][CP] + "\t");
         CP++;
     }
     TS++;
-  }*/
+  }
   
   
   System.out.println("The max node count is: " + maxNodePerPath);
