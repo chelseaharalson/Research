@@ -291,7 +291,6 @@ public class HadoopAnalyzer_v14 {
   {
     Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(si);
     CGNode siNode = (CGNode)contextInfo.val2;
-    if (siNode.toString().indexOf("Application") >= 0) {
       Statement statement = createStatement(siNode, si);
       if (statement != null)
       {
@@ -305,7 +304,6 @@ public class HadoopAnalyzer_v14 {
             statementCount++;
           }
       }
-    }
   }
   
   ThinSlicer ts = new ThinSlicer(cg,pointerAnalysis);
@@ -341,26 +339,6 @@ public class HadoopAnalyzer_v14 {
             prettyPrint(st);  
       }
   }
-  
-  /*int size = relevantTS.size();
-  System.out.println("Relevant TS size: " + size);
-  String[][] RM = new String[size][size];
-  int TS = 0;
-  for (Statement sd : relevantTS.keySet()) {
-    int CP = 0;
-    for (HashSet<String> configParam : relevantTS.values()) {
-        //System.out.println(configParam + "\t");
-        if (relevantTS.containsValue(configParam)) {
-          RM[TS][CP] = "True";
-        }
-        else {
-          RM[TS][CP] = "False";
-        }
-        System.out.println(sd + "\t" + RM[TS][CP] + "\t");
-        CP++;
-    }
-    TS++;
-  }*/
   
   generateCSVfile("/home/chelseametcalf/results.csv", relevantTS);
   
