@@ -1,8 +1,8 @@
+
 package MyCode;
 import java.io.File;
 import java.io.BufferedReader;
 import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -88,7 +88,7 @@ import com.ibm.wala.ssa.ConstantValue;
 import com.ibm.wala.analysis.typeInference.*;
 
 
-public class HadoopAnalyzer_v14 {
+public class HadoopAnalyzer_v14_test {
     
   //  CGNode => HashSet<SSAInstruction>
   static HashMap<Object, HashSet<Object>> callSites = new HashMap<Object, HashSet<Object>>();
@@ -134,9 +134,7 @@ public class HadoopAnalyzer_v14 {
 
   static ArrayList<IClass> entryClasses = new  ArrayList<IClass>();
 
-  //static HashMap<Statement, String> relevantTS = new HashMap<Statement, String>();
-  
-  static HashMap<Statement, HashSet<String>> relevantTS = new HashMap<Statement, HashSet<String>>();
+  static HashMap<Statement, String> relevantTS = new HashMap<Statement, String>();
 
   static  class Triple<T1, T2, T3> {
 
@@ -172,12 +170,12 @@ public class HadoopAnalyzer_v14 {
   Properties p = CommandLine.parse(args);
   String scopeFile = p.getProperty("scopeFile");
   //entryClass = p.getProperty("entryClass");
-  entryClass = collectAllClasses(scopeFile);
-  /*entryClass = "Lorg/apache/hadoop/mapred/ReduceTask;Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$MapOutputCopier;" +
+  //entryClass = collectAllClasses(scopeFile);
+  entryClass = "Lorg/apache/hadoop/mapred/ReduceTask;Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$MapOutputCopier;" +
       "Lorg/apache/hadoop/mapred/ReduceTask$ReduceCopier$InMemFSMergeThread;Lorg/apache/hadoop/mapred/JobConf;" +
       "Lorg/apache/hadoop/mapred/MapTask;Lorg/apache/hadoop/mapred/MapTask$MapOutputBuffer;Lorg/apache/hadoop/io/SequenceFile;" +
       "Lorg/apache/hadoop/io/SequenceFile$Sorter;Lorg/apache/hadoop/io/SequenceFile$Sorter$MergeQueue;Lorg/apache/hadoop/io/SequenceFile$Reader";
-  mainClass = p.getProperty("mainClass");*/
+  mainClass = p.getProperty("mainClass");
   targetClassNames = p.getProperty("targetClassNames");
   exclusionsFile = p.getProperty("exclusionsFile");
    
@@ -234,7 +232,7 @@ public class HadoopAnalyzer_v14 {
      if (graph == null) continue; 
      IR ir = node.getIR();
      
-     if (ir == null || !(node.toString().indexOf("Application") >= 0) ) continue;
+     if (ir == null) continue;
      SSAInstruction[] insts = ir.getInstructions();
      for(int i=0; i < insts.length; i++) 
      {
@@ -253,14 +251,14 @@ public class HadoopAnalyzer_v14 {
   //SSAInstruction instr = findCallToMethodCall(class1, method1,class2,method2);
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/mapred/MapTask$MapOutputBuffer", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
-  //SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
+  SSAInstruction instr = findCallToMethodCall("Lorg/apache/hadoop/io/SequenceFile$Reader", "init","Lorg/apache/hadoop/util/ReflectionUtils","newInstance");
   //SSAInstruction instr = findCallToMethodCall("LMapTask", "main", "LMapTask", "bar");
   
-  for (SSAInstruction instr : instructionContext.keySet())
+  //for (SSAInstruction instr : instructionContext.keySet())
   {
     if (instr != null)
     {
-       System.out.println("Found the seed instruction: " + prettyPrint(instr));
+      System.out.println("Found the seed instruction: " + prettyPrint(instr));
        seedInstr.add(instr);
        // Add the target statement as if it is a control statement too.. 
        controlStatements.add(instr);
@@ -318,8 +316,8 @@ public class HadoopAnalyzer_v14 {
       branchCount++;
       System.out.println("Branch: " + branchCount + " << ");
       ArrayList<String> slicesSoFar = new ArrayList<String>();
-      Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,kSliceDepth);
-      dumpSlice(statement, slice, (kSliceDepth), slicesSoFar);
+      Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,kSliceDepth+1);
+      dumpSlice(statement, slice, (kSliceDepth+1), slicesSoFar);
       /*
         for(int i=0; i < kSliceDepth; i++) {
          Iterator<Statement> slice = ts.computeBackwardThinSliceKStep(statement,i+1);
@@ -343,26 +341,21 @@ public class HadoopAnalyzer_v14 {
   }
   
   /*int size = relevantTS.size();
-  System.out.println("Relevant TS size: " + size);
   String[][] RM = new String[size][size];
   int TS = 0;
+  int CP = 0;
   for (Statement sd : relevantTS.keySet()) {
-    int CP = 0;
-    for (HashSet<String> configParam : relevantTS.values()) {
-        //System.out.println(configParam + "\t");
+    for (String configParam : relevantTS.values()) {
         if (relevantTS.containsValue(configParam)) {
           RM[TS][CP] = "True";
         }
         else {
           RM[TS][CP] = "False";
         }
-        System.out.println(sd + "\t" + RM[TS][CP] + "\t");
         CP++;
     }
     TS++;
   }*/
-  
-  generateCSVfile("/home/chelseametcalf/results.csv", relevantTS);
   
   
   System.out.println("The max node count is: " + maxNodePerPath);
@@ -507,10 +500,6 @@ public class HadoopAnalyzer_v14 {
         }
         kBranchCount++;
       }
-      
-      // if not conditional, check if method call
-      // make a recursive call and go inside CGnode inside that method
-      // find exit points of method before going in, and start call from each exit point
     }
       
       // Loop through preds and then call function recursively on each one.. Explores the predecessors
@@ -735,13 +724,6 @@ public class HadoopAnalyzer_v14 {
         str = str.substring(0, str.length()-1);
       }
       return str;
-    }
-    
-    public static String removeLastComma(String str) {
-      if (str.length() > 0 && str.charAt(str.length()-1)==',') {
-        str = str.substring(0, str.length()-1);
-      }
-      return str;
   }
 
   
@@ -873,29 +855,6 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
   }
 }
   }  
-  
-  
-  static String returnPrettyPrint(Statement s) {
-    String tar = "";
-    if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statements
-      int bcIndex, instructionIndex = ((NormalStatement) s).getInstructionIndex();
-      try {
-        bcIndex = ((ShrikeBTMethod) s.getNode().getMethod()).getBytecodeIndex(instructionIndex);
-        try {
-          int src_line_number = s.getNode().getMethod().getLineNumber(bcIndex);
-          tar = "Source line number = " + src_line_number + " in " + s.getNode().getMethod().getDeclaringClass();
-          //System.out.println(tar);
-        } catch (Exception e) {
-          System.out.println("Bytecode index no good");
-          System.out.println(e.getMessage());
-        }
-      } catch (Exception e ) {
-        System.out.println("it's probably not a BT method (e.g. it's a fakeroot method)");
-        System.out.println(e.getMessage());
-      }
-    }
-    return tar;
-  }
 
   //public static void dumpSlice(Statement seed, Collection<Statement> slice) 
     public static void dumpSlice(Statement seed, Iterator<Statement> slice, int k, ArrayList<String> slicesSoFar) 
@@ -913,10 +872,10 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
                   inst.getDeclaredTarget().getName().toString().indexOf("getDouble") >=0 ||
                   inst.getDeclaredTarget().getName().toString().indexOf("getLong") >=0 
                  ) 
-                        //&& (inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/conf/Configuration") >=0 
-         //|| inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/mapred/JobConf") >=0) 
-                  && (inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("LConfiguration") >=0 
-         || inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("LJobConf") >=0) 
+                        && (inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/conf/Configuration") >=0 
+         || inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("Lorg/apache/hadoop/mapred/JobConf") >=0) 
+         //         && (inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("LConfiguration") >=0 
+         //|| inst.getDeclaredTarget().getDeclaringClass().getName().toString().indexOf("LJobConf") >=0) 
          
          && inst.getDeclaredTarget().getDescriptor().toString().indexOf("Ljava/lang/String;") >= 0) 
              //if (inst.getDeclaredTarget().getName().toString().indexOf("getInt") >= 0 
@@ -940,27 +899,12 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
                            if (tbl.isStringConstant(paramValueNum)) 
                            {
                              String configParam = tbl.getStringValue(paramValueNum).trim();
-                             
                              System.out.println("Configuration Parameters: " + configParam);
                              if (!slicesSoFar.contains(configParam)) {
                                  parameterControlDistance.put(configParam, controlStatementDepth.get(seed));
                                  addToMap(parameterSlicingDistance, configParam, seed, k);
                                  slicesSoFar.add(configParam);
-                                 
-                                 HashSet<String> cp = new HashSet<String>();
-                                 String confP = "";
-                                 confP += configParam + ",";
-                                 confP = removeLastComma(confP);
-                                 if (relevantTS.containsKey(seed)) {
-                                   cp = relevantTS.remove(seed);
-                                   cp.add(confP);
-                                   relevantTS.put(seed, cp);
-                                 }
-                                 else {
-                                   cp.add(confP);
-                                   relevantTS.put(seed, cp);
-                                 }
-                                 
+                                 relevantTS.put(seed, configParam);
                              }
                            }
                          }
@@ -1093,55 +1037,6 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
       //}
     }
     return result;
-  }
-  
-  public static void generateCSVfile(String sFileName, HashMap<Statement, HashSet<String>> relTS) {
-    try {
-        FileWriter writer = new FileWriter(sFileName);
-   
-        final String DELIMITER = ";";
-        final String NEW_LINE_SEPARATOR = "\n";
-        
-        int size = relTS.size();
-        System.out.println("Relevant TS size: " + size);
-        String[][] RM = new String[size][size];
-        
-        // Column header (configuration parameters)
-        //writer.append(DELIMITER);
-        for (HashSet<String> configParam : relTS.values()) {
-          writer.append(configParam.toString());
-          writer.append(DELIMITER);
-        }
-        writer.append(NEW_LINE_SEPARATOR);
-        
-        int TS = 0;
-        // Rows (target statements with line number and class)
- 
-        for (Statement s : relTS.keySet()) {
-          writer.append(returnPrettyPrint(s));
-          writer.append(DELIMITER);
-          writer.append(NEW_LINE_SEPARATOR);
-          HashSet<String> confSet = relTS.get(s); 
-          int CP = 0;
-          for (HashSet<String> confPar : relTS.values()) {
-            if (confSet.contains(confPar)) {
-              RM[TS][CP] = "True;";
-            }
-            else {
-              RM[TS][CP] = "False;";
-            }
-            writer.append(RM[TS][CP]);
-            CP++;
-          }
-          TS++;
-        }
-
-        writer.flush();
-        writer.close();
-    }
-    catch(IOException e) {
-         e.printStackTrace();
-    } 
   }
   
 }
