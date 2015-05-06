@@ -133,8 +133,6 @@ public class HadoopAnalyzer_v14 {
   static ArrayList<String> visitedCM = new ArrayList<String>();
 
   static ArrayList<IClass> entryClasses = new  ArrayList<IClass>();
-
-  //static HashMap<Statement, String> relevantTS = new HashMap<Statement, String>();
   
   static HashMap<Statement, HashSet<String>> relevantTS = new HashMap<Statement, HashSet<String>>();
 
@@ -1078,40 +1076,40 @@ if (s.getKind() == Statement.Kind.NORMAL) { // ignore special kinds of statement
         FileWriter writer = new FileWriter(sFileName);
    
         final String DELIMITER = ";";
-        final String NEW_LINE_SEPARATOR = "\n";
+        final String NEW_LINE = "\n";
         
         int size = relTS.size();
         System.out.println("Relevant TS size: " + size);
         String[][] RM = new String[size][size];
-        
+
+        writer.append(DELIMITER);
         // Column header (configuration parameters)
-        //writer.append(DELIMITER);
         for (HashSet<String> configParam : relTS.values()) {
           writer.append(configParam.toString());
           writer.append(DELIMITER);
         }
-        writer.append(NEW_LINE_SEPARATOR);
         
+        writer.append(NEW_LINE);
         int TS = 0;
-        // Rows (target statements with line number and class)
- 
         for (Statement s : relTS.keySet()) {
           writer.append(returnPrettyPrint(s));
           writer.append(DELIMITER);
-          writer.append(NEW_LINE_SEPARATOR);
+          
           HashSet<String> confSet = relTS.get(s); 
           int CP = 0;
           for (HashSet<String> confPar : relTS.values()) {
-            if (confSet.contains(confPar)) {
-              RM[TS][CP] = "True;";
+            if (confSet.containsAll(confPar)) {
+              RM[TS][CP] = "True";
             }
             else {
-              RM[TS][CP] = "False;";
+              RM[TS][CP] = "False";
             }
             writer.append(RM[TS][CP]);
+            writer.append(DELIMITER);
             CP++;
           }
           TS++;
+          writer.append(NEW_LINE);
         }
 
         writer.flush();
