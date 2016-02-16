@@ -1,0 +1,1 @@
+-scopeFile "/home/chelsea/Documents/DeadlockProject/EvaluateThreads/TestProgram/scope.txt" -entryClass "LThreadExample;LThreadExample$HelloRunnable;LThreadExample$GoodByeRunnable"
