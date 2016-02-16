@@ -1,0 +1,47 @@
+--- FSNamesystem_0180.java	2008-08-14 15:48:25.000000000 -0400
++++ FSNamesystem_0183.java	2009-01-22 18:09:35.000000000 -0500 
+@@ -3989,8 +4010,13 @@
+         }
+       }
+       // leave safe mode and stop the monitor
+-      if(safeMode != null)
+-        safeMode.leave(true, true);
++      try {
++        leaveSafeMode(true);
++      } catch(SafeModeException es) { // should never happen
++        String msg = "SafeModeMonitor may not run during distributed upgrade.";
++        assert false : msg;
++        throw new RuntimeException(msg, es);
++      }
+       smmthread = null;
+     }
+   }
+@@ -4068,20 +4094,20 @@
+    * @throws IOException
+    */
+   synchronized void enterSafeMode() throws IOException {
+-    if (isInSafeMode()) {
+-      NameNode.stateChangeLog.info("STATE* Safe mode is already ON."); 
++    if (!isInSafeMode()) {
++      safeMode = new SafeModeInfo();
+       return;
+     }
+-    safeMode = new SafeModeInfo();
++    safeMode.setManual();
++    NameNode.stateChangeLog.info("STATE* Safe mode is ON. " 
++                                + safeMode.getTurnOffTip());
+   }
+-    
++
+   /**
+    * Leave safe mode.
+    * @throws IOException
+    */
+-  synchronized void leaveSafeMode(boolean checkForUpgrades,
+-                                  boolean checkBlockReplication
+-                                 ) throws IOException {
++  synchronized void leaveSafeMode(boolean checkForUpgrades) throws SafeModeException {
+     if (!isInSafeMode()) {
+       NameNode.stateChangeLog.info("STATE* Safe mode is already OFF."); 
+       return;
++  synchronized(heartbeats){

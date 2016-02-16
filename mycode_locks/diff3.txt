@@ -1,0 +1,18 @@
+--- FSNamesystem_0180.java	2008-08-14 15:48:25.000000000 -0400
++++ FSNamesystem_0183.java	2009-01-22 18:09:35.000000000 -0500 
+@@ -3989,8 +4010,13 @@
+         }
+       }
+       // leave safe mode and stop the monitor
+-      if(safeMode != null)
+-        safeMode.leave(true, true);
++      try {
++        leaveSafeMode(true);
++      } catch(SafeModeException es) { // should never happen
++        String msg = "SafeModeMonitor may not run during distributed upgrade.";
++        assert false : msg;
++        throw new RuntimeException(msg, es);
++      }
+       smmthread = null;
+     }
+   }
