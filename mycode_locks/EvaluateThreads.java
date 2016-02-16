@@ -93,7 +93,7 @@ public class EvaluateThreads {
   static ExplodedInterproceduralCFG icfg;
   static PointerAnalysis pointerAnalysis; 
   static HeapModel heapModel;
-  //static String progFile;
+  static String methodFile;
   
   // maps instructions to <cgnode,basicblock>
   static HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>> instructionContext = new  HashMap<SSAInstruction, Triple<Integer, CGNode, IExplodedBasicBlock>>();
@@ -109,15 +109,19 @@ public class EvaluateThreads {
   public static void main(String[] args) throws Exception, IOException, ClassHierarchyException, IllegalArgumentException, CallGraphBuilderCancelException, InvalidClassFileException {
     long start = System.currentTimeMillis();
     Properties p = CommandLine.parse(args);
-    //progFile = p.getProperty("progFile");
+    methodFile = p.getProperty("methodFile");
     String scopeFile = p.getProperty("scopeFile");
     entryClass = p.getProperty("entryClass");
     mainClass = p.getProperty("mainClass");
     targetClassNames = p.getProperty("targetClassNames");
     
-    /*if (progFile == null) {
+    if (methodFile == null) {
       throw new Exception("Program file must be provided!"); 
-    }*/
+    }
+    
+    String[] method = parseMethodFile(methodFile);
+    String m1 = method[0];
+    String m2 = method[1];
     
     pType = p.getProperty("pointerAnalysis"); 
     if (pType == null)
@@ -170,27 +174,25 @@ public class EvaluateThreads {
     
     for (SSAInstruction instr : instructionContext.keySet()) {
       if (instr != null) {
-         System.out.println("Found the seed instruction: " + prettyPrint(instr));
+         //System.out.println("Found the seed instruction: " + prettyPrint(instr));
          seedInstr.add(instr);
          Triple<Integer, CGNode, IExplodedBasicBlock> contextInfo = instructionContext.get(instr);
-         CGNode siNode = (CGNode)contextInfo.val2;
-         //System.out.println("Seed Instruction Count: " + seedInstrCount);
          // Collect reachable nodes up to depth 
          int subgraphHeight = 4;
          collectAllReachableInSubGraph(instr, seedInstr, subgraphHeight);
       }
     }
     
-    System.out.println(threadObjects);
+    //System.out.println(threadObjects);
+    analyzeThreadObjects(threadObjects, m1, m2);
      
-    
     long end = System.currentTimeMillis();
     System.out.println("done");
     System.out.println("took " + (end-start) + "ms");
     System.out.println(CallGraphStats.getStats(cg));
   }
   
-  public static String[] parseProgFile(String fname) {
+  public static String[] parseMethodFile(String fname) {
     String[] typeArray = null;
     BufferedReader br = null;
     try {
@@ -239,54 +241,38 @@ public class EvaluateThreads {
               //System.out.println("ND: " + nd);
               while (succs.hasNext()) {
                 CGNode threadRun = succs.next();
-                System.out.println("THREAD RUN: " + threadRun);
+                //System.out.println("THREAD RUN: " + threadRun);
                 if (threadRun.getMethod().toString().indexOf(current.getMethod().getDeclaringClass().getName().toString()) >= 0)
                 {
-                  // Find call sites of run
-                  /*HashSet<SSAInstruction> csites = callSites.get(nd);
-                  if (csites != null) {
-                    for(SSAInstruction csins: csites) {
-                      
-                      Triple<Integer, CGNode, IExplodedBasicBlock> contextInf = instructionContext.get(csins);
-                      CGNode siNode = contextInf.val2;
-                      
-                      SSAInvokeInstruction inst3 = (SSAInvokeInstruction) csins;
-                      predsCG = cg.getPredNodes(nd);
-                      for(;predsCG.hasNext();) {
-                         CGNode nn = predsCG.next();
-                         
-                         if (nn == siNode) {
-                           if (nn.toString().indexOf("Application") >= 0)
-                             System.out.println("NN: " + nn.getMethod().toString());
-                             exploreSuccessors(list, nn, depth--);
-                         }
-                        
-                      }
-                    }
-                  }*/
                   
                   if (insts[i] instanceof SSAInvokeInstruction && isInDesiredClass((SSAInvokeInstruction)insts[i])) {
                     MethodReference mr = ((SSAInvokeInstruction)insts[i]).getDeclaredTarget();
                           java.util.Set<CGNode> nodes = cg.getNodes(mr);
                           for(CGNode succno : nodes) {
-                            System.out.println("SUCC: " + succno);
+                            //System.out.println("SUCC: " + succno);
                             addThreadObjects(threadRun, succno);
                             exploreSuccessors(list, succno, depth--);
                           }
-                 }
-                  
-                  
+                   }
+                   
                }
               }
            }
         }
-        
-        /*if (insts[i] instanceof SSAInvokeInstruction && isInDesiredClass((SSAInvokeInstruction)insts[i])) {
-           MethodReference mr = ((SSAInvokeInstruction)insts[i]).getDeclaredTarget();
-                 java.util.Set<CGNode> nodes = cg.getNodes(mr);
-                 for(CGNode succ : nodes) 
-                   exploreSuccessors(list, succ, depth--);
-        }*/
+      }
+    }
+  }
+  
+  static void analyzeThreadObjects(HashMap<CGNode, HashSet<CGNode>> tobjects, String method1, String method2) {
+    for (Map.Entry<CGNode, HashSet<CGNode>> entry : tobjects.entrySet()) {
+      CGNode threadObj = entry.getKey();
+      HashSet<CGNode> methods = entry.getValue();
+      //System.out.println(threadObj + "    " + methods);
+      for (CGNode methodNode : methods) {
+        //System.out.println(threadObj + "     " + methodNode);
+        if (methodNode.getMethod().getName().toString().equals(method1) || methodNode.getMethod().getName().toString().equals(method2)) {
+          System.out.println(threadObj + "\t" + methodNode);
+        }
       }
     }
   }
