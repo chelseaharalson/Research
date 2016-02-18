@@ -1,14 +1,22 @@
 public class ThreadExample2 {
 
     public static void main(String[] args) {
+	for (int i = 0; i < 2; i++) {
+            System.out.println("MAIN: " + i);
+        }
 	foo();
         (new Thread(new HelloRunnable())).start();
         (new Thread(new GoodByeRunnable())).start();
 	(new Thread(new T1())).start();
+	blue();
     }
 
     public static void foo() {
 	System.out.println("Hi from foo()!");
+    }
+
+    public static void blue() {
+	System.out.println("Hi from blue()!");
     }
     
 }
