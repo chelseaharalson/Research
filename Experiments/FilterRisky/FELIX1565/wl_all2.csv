@@ -1,0 +1,5 @@
+
+Ljava/util/HashMap,Ljava/lang/Class,1,2
+Ljava/lang/Class,Ljava/util/HashMap,2,1
+Ljava/lang/Class,Ljava/util/ArrayList,1,3
+Ljava/util/ArrayList,Ljava/lang/Class,3,1

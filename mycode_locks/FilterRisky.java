@@ -14,6 +14,8 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import mycode_locks.CheckPatch.Quad;
+
 import com.ibm.wala.classLoader.IBytecodeMethod;
 import com.ibm.wala.classLoader.IClass;
 import com.ibm.wala.classLoader.IMethod;
@@ -134,6 +136,48 @@ public class FilterRisky {
               val6 = v6;
           }
        }
+       
+       static class Sev<T1, T2, T3, T4, T5, T6, T7> {
+         T1 val1;
+         T2 val2;
+         T3 val3;
+         T4 val4;
+         T5 val5;
+         T6 val6;
+         T7 val7;
+
+          public Sev(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5, T6 v6, T7 v7) {
+              val1 = v1;
+              val2 = v2;
+              val3 = v3; 
+              val4 = v4;
+              val5 = v5;
+              val6 = v6;
+              val7 = v7;
+          }
+       }
+       
+       static class Eight<T1, T2, T3, T4, T5, T6, T7, T8> {
+         T1 val1;
+         T2 val2;
+         T3 val3;
+         T4 val4;
+         T5 val5;
+         T6 val6;
+         T7 val7;
+         T8 val8;
+
+          public Eight(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5, T6 v6, T7 v7, T8 v8) {
+              val1 = v1;
+              val2 = v2;
+              val3 = v3; 
+              val4 = v4;
+              val5 = v5;
+              val6 = v6;
+              val7 = v7;
+              val8 = v8;
+          }
+       }
 
     static HashMap<Integer, Double<String,String>> oldVersionLineNumSYNC = new HashMap<Integer, Double<String,String>>();
     static HashMap<Integer, Double<String,String>> newVersionLineNumSYNC = new HashMap<Integer, Double<String,String>>();
@@ -141,15 +185,17 @@ public class FilterRisky {
     static HashMap<Integer, Double<String,String>> newVersionLineNumMETHODSTYPE6 = new HashMap<Integer, Double<String,String>>();
     static HashMap<Integer, Double<String,String>> newVersionLineNumMETHODSTYPE7 = new HashMap<Integer, Double<String,String>>();
     
-    static HashMap<Integer, Quad<String,String,String,String>> oldLineMethodClass = new HashMap<Integer, Quad<String,String,String,String>>();
-    static HashMap<Integer, Quint<String,String,String,Integer,String>> newLineMethodClass = new HashMap<Integer, Quint<String,String,String,Integer,String>>();
-    static HashMap<Integer, Quint<String,String,String,Integer,String>> newLineMethodClass4Ca = new HashMap<Integer, Quint<String,String,String,Integer,String>>();
-    static HashMap<Integer, Quad<String,String,String,String>> newLineMethodClassTYPE4 = new HashMap<Integer, Quad<String,String,String,String>>();
-    static HashMap<Integer, Quint<String,String,String,Integer,String>> newLineMethodClassTYPE4C = new HashMap<Integer, Quint<String,String,String,Integer,String>>();
-    static HashMap<Integer, Hex<String,String,String,Integer,String,String>> newLineMethodClassTYPE4CC = new HashMap<Integer, Hex<String,String,String,Integer,String,String>>();
-    static HashMap<Integer, Quint<String,String,String,Integer,String>> newLineMethodClassTYPE6mon = new HashMap<Integer, Quint<String,String,String,Integer,String>>();
-    static HashMap<Integer, Hex<String,String,String,Integer,String,String>> newLineMethodClassTYPE6meth = new HashMap<Integer, Hex<String,String,String,Integer,String,String>>();
-    static HashMap<Integer, Hex<String,String,String,Integer,String,String>> newLineMethodClassTYPE7 = new HashMap<Integer, Hex<String,String,String,Integer,String,String>>();
+    static HashMap<Integer, Sev<String,String,String,String,String,String,Integer>> oldLineMethodClass = new HashMap<Integer, Sev<String,String,String,String,String,String,Integer>>();
+    static HashMap<Integer, Sev<String,String,String,Integer,String,String,String>> newLineMethodClass = new HashMap<Integer, Sev<String,String,String,Integer,String,String,String>>();
+    static HashMap<Integer, Sev<String,String,String,Integer,String,String,String>> newLineMethodClass4Ca = new HashMap<Integer, Sev<String,String,String,Integer,String,String,String>>();
+    static HashMap<Integer, Sev<String,String,String,String,String,String,Integer>> newLineMethodClassTYPE4 = new HashMap<Integer, Sev<String,String,String,String,String,String,Integer>>();
+    static HashMap<Integer, Sev<String,String,String,Integer,String,String,String>> newLineMethodClassTYPE4C = new HashMap<Integer, Sev<String,String,String,Integer,String,String,String>>();
+    static HashMap<Integer, Eight<String,String,String,Integer,String,String,String,String>> newLineMethodClassTYPE4CC = new HashMap<Integer, Eight<String,String,String,Integer,String,String,String,String>>();
+    static HashMap<Integer, Sev<String,String,String,Integer,String,String,String>> newLineMethodClassTYPE6mon = new HashMap<Integer, Sev<String,String,String,Integer,String,String,String>>();
+    static HashMap<Integer, Eight<String,String,String,Integer,String,String,String,String>> newLineMethodClassTYPE6meth = new HashMap<Integer, Eight<String,String,String,Integer,String,String,String,String>>();
+    static HashMap<Integer, Eight<String,String,String,Integer,String,String,String,String>> newLineMethodClassTYPE7 = new HashMap<Integer, Eight<String,String,String,Integer,String,String,String,String>>();
+    
+    static HashMap<Integer, Double<String, String>> watchlistInfo = new HashMap<Integer, Double<String, String>>();
     
     static ArrayList<String> generated = new ArrayList<String>();
     static ArrayList<String> nodeClasses = new ArrayList<String>();
@@ -187,6 +233,8 @@ public class FilterRisky {
     static Integer key5 = 0;
     static Integer key6 = 0;
     static Integer key7 = 0;
+    static Integer key8 = 0;
+    static Integer key9 = 0;
     
     private static final String FILEPATH = "/home/chelsea/FilterRiskyTargetFiles/target";
     private static final String FILEPATH2 = "/home/chelsea/FilterRiskyTargetFiles/analysis";
@@ -234,9 +282,16 @@ public class FilterRisky {
         System.out.println("Filter New Version Type 7: " + entry.getValue().val1 + "  line: " + entry.getKey() + "   " + entry.getValue().val2);
       }*/
       
-      String[] type = parseWatchList(watchList);
-      String T1 = type[0];
-      String T2 = type[1];
+      //String[] type = parseWatchList(watchList);
+      //String T1 = type[0];
+      //String T2 = type[1];
+      
+      readWatchlistInfo(watchList);
+      //System.out.println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ WATCH LIST: " + watchlistInfo);
+      /*for (Integer i : watchlistInfo.keySet()) {
+        Double<String,String> wl = watchlistInfo.get(i);
+        System.out.println(wl.val1 + ";" + wl.val2);
+      }*/
 
       pType = p.getProperty("pointerAnalysis"); 
       if (pType == null)
@@ -262,7 +317,7 @@ public class FilterRisky {
       //System.out.println("Exploding the call graph.." + cg.getClass().getName());
                       
       icfg = ExplodedInterproceduralCFG.make(cg);
-      
+
       for(CGNode node: icfg.getCallGraph()) {
          if (!isATarget(node)) continue;
          ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
@@ -288,18 +343,26 @@ public class FilterRisky {
            SSAInstruction in = findMonitorInstr(node, entry.getKey(), false);
            if (in != null) {
              //System.out.println("INST!!!!!!!!!!!!!!!!!!!!!! " + in);
-             checkTypeMonitor(in, T1, T2, entry.getKey(), entry.getValue().val2, false);
+             for(Integer i : watchlistInfo.keySet()) {
+               Double<String,String> wl = watchlistInfo.get(i);
+               String T1 = wl.val1;
+               String T2 = wl.val2;
+               checkTypeMonitor(in, T1, T2, entry.getKey(), entry.getValue().val2, false);
+             }
            }
          }
       }
       
       for(Integer i: oldLineMethodClass.keySet()) {
-          Quad<String,String,String,String> oMCL = oldLineMethodClass.get(i);
+          Sev<String,String,String,String,String,String,Integer> oMCL = oldLineMethodClass.get(i);
           String methodName = oMCL.val1;
           String className = oMCL.val2;
           String lockType = oMCL.val3;
           String stmt = oMCL.val4;
-          int lineNum = i;
+          String T1 = oMCL.val5;
+          String T2 = oMCL.val6;
+          Integer lineNum = oMCL.val7;
+          //int lineNum = i;
           if (lockType == "type1") {
             generateTargetFile123("onward", className, methodName, lineNum, T2, T1, "1", stmt);
           }
@@ -348,21 +411,31 @@ public class FilterRisky {
            SSAInstruction in = findMonitorInstr(node, entry.getKey(), true);
            if (in != null) {
              //System.out.println("INST!!!!!!!!!!!!!!!!!!!!!! " + prettyPrint(in) + "   " + entry.getKey());
-             checkTypeMonitor(in, T1, T2, entry.getKey(), entry.getValue().val2, true);
+             for(Integer i : watchlistInfo.keySet()) {
+               Double<String,String> wl = watchlistInfo.get(i);
+               String T1 = wl.val1;
+               String T2 = wl.val2;
+               checkTypeMonitor(in, T1, T2, entry.getKey(), entry.getValue().val2, true);
+             }
            }
          }
          
          for(Map.Entry<Integer, Double<String,String>> entry : newVersionLineNumMETHODS.entrySet()) {
-           //System.out.println("KEY: " + entry.getKey() + "   VALUE: " + entry.getValue());
-           checkLineNoAndInstr(node, entry.getValue().val1, entry.getKey(), T1, T2, entry.getValue().val2);
-           
-           //SSAInstruction instr = findInstr(node, entry.getValue(), entry.getKey());
-           SSAInstruction instr = findCallToInstr(node, entry.getValue().val1);
-           if (instr != null) {
-             //System.out.println("Found instruction new version!!!! " + prettyPrint(instr));
-             methodInstr.add(instr);
-             int subgraphHeight = 4;
-             collectAllReachableInSubGraph(instr, methodInstr, subgraphHeight, T1, T2, entry.getKey(), entry.getValue().val2);
+           for(Integer i : watchlistInfo.keySet()) {
+             Double<String,String> wl = watchlistInfo.get(i);
+             String T1 = wl.val1;
+             String T2 = wl.val2;
+             //System.out.println("KEY: " + entry.getKey() + "   VALUE: " + entry.getValue());
+             checkLineNoAndInstr(node, entry.getValue().val1, entry.getKey(), T1, T2, entry.getValue().val2);
+             
+             //SSAInstruction instr = findInstr(node, entry.getValue(), entry.getKey());
+             SSAInstruction instr = findCallToInstr(node, entry.getValue().val1);
+             if (instr != null) {
+               //System.out.println("Found instruction new version!!!! " + prettyPrint(instr));
+               methodInstr.add(instr);
+               int subgraphHeight = 4;
+               collectAllReachableInSubGraph(instr, methodInstr, subgraphHeight, T1, T2, entry.getKey(), entry.getValue().val2);
+             }
            }
          }
          
@@ -373,10 +446,21 @@ public class FilterRisky {
                methodInstrT6.add(instr);
                int subgraphHeight = 4;
                //System.out.println(entry.getValue().val2);
-               collectAllReachableInSubGraphType6(instr, methodInstrT6, subgraphHeight, T1, T2, entry.getValue().val2);
+               for(Integer i : watchlistInfo.keySet()) {
+                 Double<String,String> wl = watchlistInfo.get(i);
+                 String T1 = wl.val1;
+                 String T2 = wl.val2;
+                 collectAllReachableInSubGraphType6(instr, methodInstrT6, subgraphHeight, T1, T2, entry.getValue().val2);
+               }
              }
           }
       }
+      
+      /*for (Integer i : newVersionLineNumMETHODSTYPE7.keySet()) {
+        Double<String,String> oMCL = newVersionLineNumMETHODSTYPE7.get(i);
+        System.out.println("GOING IN HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        System.out.println(oMCL.val1 + "  @@@@@@@@@@@@@@@  " + oMCL.val2);
+      }*/
       
       for(CGNode node: icfg.getCallGraph()) {
           if (!isATarget(node)) continue;
@@ -385,17 +469,25 @@ public class FilterRisky {
           if (graph == null) continue; 
           for (Map.Entry<Integer, Double<String,String>> entry : newVersionLineNumMETHODSTYPE7.entrySet()) {
             CGNode rNode = findNode(node, entry.getValue().val1);
-            if (rNode != null) exploreCallSites(rNode, T1, T2, entry.getValue().val2);
+            for(Integer i : watchlistInfo.keySet()) {
+              Double<String,String> wl = watchlistInfo.get(i);
+              String T1 = wl.val1;
+              String T2 = wl.val2;
+              //System.out.println("EXPLORING CALL SITES");
+              if (rNode != null) exploreCallSites(rNode, T1, T2, entry.getValue().val2);
+            }
          }
       }
       
       for(Integer i: newLineMethodClass.keySet()) {
-        Quint<String,String,String,Integer,String> oMCL = newLineMethodClass.get(i);
+        Sev<String,String,String,Integer,String,String,String> oMCL = newLineMethodClass.get(i);
         String methodName = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String stmt = oMCL.val5;
+        String T1 = oMCL.val6;
+        String T2 = oMCL.val7;
         if (lockType == "type1") {
           generateTargetFile123("pre", className, methodName, lineNum, T2, T1, "3", stmt);
         }
@@ -405,12 +497,14 @@ public class FilterRisky {
       }
       
       for(Integer i: newLineMethodClass4Ca.keySet()) {
-        Quint<String,String,String,Integer,String> oMCL = newLineMethodClass4Ca.get(i);
+        Sev<String,String,String,Integer,String,String,String> oMCL = newLineMethodClass4Ca.get(i);
         String methodName = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String stmt = oMCL.val5;
+        String T1 = oMCL.val6;
+        String T2 = oMCL.val7;
         if (lockType == "type1") {
           generateTargetFile123("pre", className, methodName, lineNum, T2, T1, "4A (3)", stmt);
         }
@@ -420,12 +514,14 @@ public class FilterRisky {
       }
       
       for(Integer i: newLineMethodClassTYPE6mon.keySet()) {
-        Quint<String,String,String,Integer,String> oMCL = newLineMethodClassTYPE6mon.get(i);
+        Sev<String,String,String,Integer,String,String,String> oMCL = newLineMethodClassTYPE6mon.get(i);
         String methodName = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String stmt = oMCL.val5;
+        String T1 = oMCL.val6;
+        String T2 = oMCL.val7;
         if (lockType == "type1") {
           System.out.println("Not of correct lock type! " + lineNum);
         }
@@ -436,13 +532,15 @@ public class FilterRisky {
       }
       
       for(Integer i: newLineMethodClassTYPE6meth.keySet()) {
-        Hex<String,String,String,Integer,String,String> oMCL = newLineMethodClassTYPE6meth.get(i);
+        Eight<String,String,String,Integer,String,String,String,String> oMCL = newLineMethodClassTYPE6meth.get(i);
         String methodCall = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String origMethod = oMCL.val5;
         String stmt = oMCL.val6;
+        String T1 = oMCL.val7;
+        String T2 = oMCL.val8;
         if (lockType == "type1") {
           System.out.println("Not of correct lock type!");
         }
@@ -453,13 +551,15 @@ public class FilterRisky {
       }
       
       for(Integer i: newLineMethodClassTYPE7.keySet()) {
-        Hex<String,String,String,Integer,String,String> oMCL = newLineMethodClassTYPE7.get(i);
+        Eight<String,String,String,Integer,String,String,String,String> oMCL = newLineMethodClassTYPE7.get(i);
         String callSitesMethod = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String origMethod = oMCL.val5;
         String stmt = oMCL.val6;
+        String T1 = oMCL.val7;
+        String T2 = oMCL.val8;
         if (lockType == "type1") {
           System.out.println("Not of correct lock type!");
         }
@@ -470,26 +570,16 @@ public class FilterRisky {
       
       
       for(Integer i : newLineMethodClassTYPE4.keySet()) {
-          Quad<String, String, String, String> oMCL = newLineMethodClassTYPE4.get(i);
+          Sev<String, String, String, String, String, String, Integer> oMCL = newLineMethodClassTYPE4.get(i);
           String methodCall = oMCL.val1;
           String className = oMCL.val2;
           String lockType = oMCL.val3;
           String stmt = oMCL.val4;
-          int lineNum = i;
+          String T1 = oMCL.val5;
+          String T2 = oMCL.val6;
+          Integer lineNum = oMCL.val7;
+          //int lineNum = i;
           String origMethod = "";
-          /*String threadClass = "";
-          String generalClass = "";
-          String mName = "";
-          //System.out.println(className + "  " + lineNum);
-          for (String s : nodeClasses) {
-            String[] sa = s.split(":");
-            mName = sa[0];
-            threadClass = sa[1];
-            generalClass = sa[2];
-            if (mName.equals(origMethod)) {
-              break;
-            }
-          }*/
           for(Map.Entry<Integer, Double<String,String>> entry : newVersionLineNumMETHODS.entrySet()) {
             //System.out.println(className + "  " + lineNum);
             //System.out.println(entry.getKey() + "   " + lineNum);
@@ -507,13 +597,15 @@ public class FilterRisky {
       }
       
       for(Integer i : newLineMethodClassTYPE4C.keySet()) {
-        Quint<String, String, String, Integer, String> oMCL = newLineMethodClassTYPE4C.get(i);
+        Sev<String, String, String, Integer, String, String, String> oMCL = newLineMethodClassTYPE4C.get(i);
         String methodCall = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String origMethod = "";
         String stmt = oMCL.val5;
+        String T1 = oMCL.val6;
+        String T2 = oMCL.val7;
         for(Map.Entry<Integer, Double<String,String>> entry : newVersionLineNumMETHODS.entrySet()) {
           //System.out.println(entry.getKey() + "   " + lineNum);
           if (entry.getKey().equals(lineNum)) {
@@ -530,13 +622,15 @@ public class FilterRisky {
     }
       
       for(Integer i : newLineMethodClassTYPE4CC.keySet()) {
-        Hex<String, String, String, Integer, String, String> oMCL = newLineMethodClassTYPE4CC.get(i);
+        Eight<String, String, String, Integer, String, String, String, String> oMCL = newLineMethodClassTYPE4CC.get(i);
         String methodCall = oMCL.val1;
         String className = oMCL.val2;
         String lockType = oMCL.val3;
         Integer lineNum = oMCL.val4;
         String origMethod = oMCL.val5;
         String stmt = oMCL.val6;
+        String T1 = oMCL.val7;
+        String T2 = oMCL.val8;
         if (lockType == "type1") {
           generateTargetFileType4("pre", className, methodCall, origMethod, lineNum, T2, T1, "4C (4c)", stmt);
         }
@@ -544,7 +638,7 @@ public class FilterRisky {
           //System.out.println(origMethod + "      " + methodCall);
           generateTargetFileType4("onward", className, methodCall, origMethod, lineNum, T2, T1, "4C (4c)", stmt);
         }
-    }
+      }
       
       //System.out.println(fileContent);
       System.out.println(fc);
@@ -1082,12 +1176,13 @@ public class FilterRisky {
              }
            
            if (isNewVersion == false) {
-             oldLineMethodClass.put(lineNum, new Quad<String, String, String, String>(methCall, cl, type, currentLine));
+             key9 = key9 + 1;
+             oldLineMethodClass.put(key9, new Sev<String, String, String, String, String, String, Integer>(methCall, cl, type, currentLine, T1, T2, lineNum));
            }
            else if (isNewVersion == true) {
              //System.out.println("Putting in newLineMethodClass: " + methCall + " in class " + cl + " as type " + type + " at line " + lineNum);
              key3 = key3 + 1;
-             newLineMethodClass.put(key3, new Quint<String, String, String, Integer, String>(methCall, cl, type, lineNum, currentLine));
+             newLineMethodClass.put(key3, new Sev<String, String, String, Integer, String, String, String>(methCall, cl, type, lineNum, currentLine, T1, T2));
            }
         }
       }
@@ -1361,8 +1456,8 @@ public class FilterRisky {
                         if (type == "") {
                           return;
                         }
-                       
-                        newLineMethodClassTYPE4.put(lineNum, new Quad<String, String, String, String>(methCall, cl, type, currentLine));
+                        key8 = key8 + 1;
+                        newLineMethodClassTYPE4.put(key8, new Sev<String, String, String, String, String, String, Integer>(methCall, cl, type, currentLine, T1, T2, lineNum));
                     }
                   }
                   
@@ -1433,7 +1528,7 @@ public class FilterRisky {
 
                 System.out.println("Adding: " + methCall + " Source Line Num: " + sourceLineNum);
                 key2 = key2 + 1;
-                newLineMethodClass4Ca.put(key2, new Quint<String, String, String, Integer, String>(methCall, cl, type, sourceLineNum, currentLine));
+                newLineMethodClass4Ca.put(key2, new Sev<String, String, String, Integer, String, String, String>(methCall, cl, type, sourceLineNum, currentLine, T1, T2));
               }
             }
           }
@@ -1486,7 +1581,7 @@ public class FilterRisky {
                                  return;
                                }
                                key1 = key1 + 1;
-                               newLineMethodClassTYPE4C.put(key1, new Quint<String, String, String, Integer, String>(methCall, cl, type, lineNum, currentLine));
+                               newLineMethodClassTYPE4C.put(key1, new Sev<String, String, String, Integer, String, String, String>(methCall, cl, type, lineNum, currentLine, T1, T2));
                              }
                            }
                            // else if m is not synch:
@@ -1513,7 +1608,7 @@ public class FilterRisky {
                              }
                              //System.out.println("ADDING TYPE 4CC: " + methCall + " from " + ORIGmeth + " " + prettyPrint(insts[i]) + "  type: " + type + "  line " + sourceLineNumORIG);
                              key4 = key4 + 1;
-                             newLineMethodClassTYPE4CC.put(key4, new Hex<String, String, String, Integer, String, String>(methCall, cl, type, sourceLineNumORIG, ORIGmeth, currentLine));
+                             newLineMethodClassTYPE4CC.put(key4, new Eight<String, String, String, Integer, String, String, String, String>(methCall, cl, type, sourceLineNumORIG, ORIGmeth, currentLine, T1, T2));
                            }
                         }
                        }
@@ -1573,7 +1668,7 @@ public class FilterRisky {
                         type = "type2";
                         //System.out.println("MONITOR INST-----------------------------------: " + prettyPrint(in) + "   TYPE 2  " + ik.toString());
                         key5 = key5 + 1;
-                        newLineMethodClassTYPE6mon.put(key5, new Quint<String, String, String, Integer, String>(methCall, cl, type, sourceLineNum, currentLine));
+                        newLineMethodClassTYPE6mon.put(key5, new Sev<String, String, String, Integer, String, String, String>(methCall, cl, type, sourceLineNum, currentLine, T1, T2));
                         break;
                   }
               }
@@ -1629,7 +1724,7 @@ public class FilterRisky {
                                                 key6 = key6 + 1;
                                                 //System.out.println("Adding " + methCall + " from " + ORIGmeth + " at " + sourceLineNumORIG);
                                                 //System.out.println(currentLine + "  " + methCall + "   " + ORIGmeth);
-                                                newLineMethodClassTYPE6meth.put(key6, new Hex<String, String, String, Integer, String, String>(methCall, cl, type, sourceLineNumORIG, ORIGmeth, currentLine));
+                                                newLineMethodClassTYPE6meth.put(key6, new Eight<String, String, String, Integer, String, String, String, String>(methCall, cl, type, sourceLineNumORIG, ORIGmeth, currentLine, T1, T2));
                                                 break;
                                           }
                                       }
@@ -1708,7 +1803,7 @@ public class FilterRisky {
               //System.out.println("CALL SITE METHOD: " + callSiteMethod + "   SOURCE LINE NUM: " + sourceLineNum);
               //System.out.println("ORIGmeth " + ORIGmeth + "   " + sourceLineNum);
               key7 = key7 + 1;
-              newLineMethodClassTYPE7.put(key7, new Hex<String, String, String, Integer, String, String>(callSiteMethod, cl, type, sourceLineNum, ORIGmeth, currentLine));
+              newLineMethodClassTYPE7.put(key7, new Eight<String, String, String, Integer, String, String, String, String>(callSiteMethod, cl, type, sourceLineNum, ORIGmeth, currentLine, T1, T2));
             //}
           }
         }
@@ -1759,6 +1854,18 @@ public class FilterRisky {
         result = "Fake class and method";
       }
       return result;
+    }
+    
+    static void readWatchlistInfo(String watchlistFile) throws Exception, IOException{
+      BufferedReader bufR = new BufferedReader(new FileReader(watchlistFile));
+      String line;
+      Integer counterKey = 0;
+      while ((line = bufR.readLine()) != null) {
+         String[] sa = line.split(";");
+         counterKey++;
+         watchlistInfo.put(counterKey, new Double<String,String>(sa[0], sa[1]));
+      }
+      bufR.close();
     }
     
     private static boolean isATarget(CGNode node) {

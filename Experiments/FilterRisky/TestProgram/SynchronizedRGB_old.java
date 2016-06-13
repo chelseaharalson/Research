@@ -1,5 +1,3 @@
-package mycode_locks;
-
 public class SynchronizedRGB {
   
   // Values must be between 0 and 255.
@@ -56,20 +54,8 @@ public class SynchronizedRGB {
     blue = 255 - blue;
     name = "Inverse of " + name;
   }
-  
-  public void startNewTask() {
-    SynchronizedRGB tip = new SynchronizedRGB(this.red, this.green, this.blue, this.name);
-    SyncTest t = new SyncTest();
-    synchronized (tip) {
-      try {
-        tip.invert();
-        t.getN();
-      } catch (Throwable ie) {
-      }
-    }
-  }
-  
-  void testType6() {
+
+  synchronized void testType6() {
     SyncTest t6 = new SyncTest();
     String p = t6.getNa();
     synchronized (t6) {
@@ -81,46 +67,35 @@ public class SynchronizedRGB {
     }
   }
 
+  public void type1Example() {
+    SynchronizedRGB tip1 = new SynchronizedRGB(this.red, this.green, this.blue, this.name);
+    synchronized (tip1) {
+      try {
+        tip1.invert();
+      } catch (Throwable ie) {
+      }
+    }
+  }
+
   
   public class SyncTest {
-    private String n;
-    public synchronized String getN() {
-      return n;
+    void getType7() {
+      red = 255 - red;
     }
-    
+
+    private String n;
     public synchronized String getNa() {
       getType7();
       return n;
     }
-    
-    synchronized void getType7() {
-      red = 255 - red;
+    public synchronized String getCa() {
+      getType7();
+      return n;
     }
-    
-    public void type4C() {
-      grayscale();
-    }
-    
-    public void grayscale() {
-      red = 255 - red;
-      green = 255 - green;
-      blue = 255 - blue;
-      name = "Inverse of " + name;
-    }
-    
+
     SynchronizedRGB sr;
     void cleanup() {
       int taskId = sr.getRGB();
-      synchronized (SynchronizedRGB.this) {
-         sr.set(red, green, blue, name);
-         synchronized (this) {
-           try {
-              sr.invert();
-           } 
-           catch (Throwable ie) {
-           }
-         }
-      }
     }
   }
 }

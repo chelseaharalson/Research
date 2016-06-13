@@ -1,0 +1,14 @@
+refPoint=onward;LSynchronizedRGB;type1Example;monitorenter;72;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=pre;LSynchronizedRGB;startNewTask;monitorenter;73;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB$SyncTest;cleanup;monitorenter;118;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=pre;LSynchronizedRGB$SyncTest;cleanup;monitorenter;116;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB;testType6;monitorenter;61;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB$SyncTest;getNa;testType6;60;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB$SyncTest;getNa;getType7;94;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB$SyncTest;getCa;getType7;98;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB;startNewTask;getN;76;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=pre;LSynchronizedRGB$SyncTest;cleanup;invert;120;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=pre;LSynchronizedRGB;startNewTask;invert;75;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=onward;LSynchronizedRGB$SyncTest;grayscale;type4C;103;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+refPoint=pre;LSynchronizedRGB;set;cleanup;117;LSynchronizedRGB$SyncTest;LSynchronizedRGB
+

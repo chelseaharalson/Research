@@ -1,0 +1,5 @@
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;unregisterFrameworkListsForContextSearch;monitorenter;208;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers ---- TYPE 2    +                    synchronized (m_frameworks) at line 208
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;registerFrameworkInstance;monitorenter;507;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers ---- TYPE 2    +        synchronized (m_frameworks) at line 507
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;unregisterFrameworkInstance;monitorenter;535;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers ---- TYPE 2    +        synchronized (m_frameworks) at line 535
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;getFrameworkFromContext;monitorenter;608;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers ---- TYPE 2    +                    synchronized (frameworks) at line 608
+

@@ -1,0 +1,5 @@
+Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo;Lorg/apache/hadoop/dfs/UpgradeManagerNamenode
+Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo;Lorg/apache/hadoop/metrics/util/MetricsIntValue
+Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo;Lorg/apache/hadoop/dfs/DatanodeDescriptor
+Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo;Lorg/apache/hadoop/dfs/UnderReplicatedBlocks
+Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo;Ljava/util/Properties

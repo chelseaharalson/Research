@@ -1,0 +1,1 @@
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo

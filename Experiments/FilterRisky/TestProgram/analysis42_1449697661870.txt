@@ -1,0 +1,14 @@
+refPoint=onward;LSynchronizedRGB;type1Example;monitorenter;72;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 1    -    synchronized (tip1) { at line 72
+refPoint=pre;LSynchronizedRGB;startNewTask;monitorenter;73;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 3    +    synchronized (tip) { at line 73
+refPoint=onward;LSynchronizedRGB$SyncTest;cleanup;monitorenter;118;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 2    +         synchronized (this) { at line 118
+refPoint=pre;LSynchronizedRGB$SyncTest;cleanup;monitorenter;116;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 3    +      synchronized (SynchronizedRGB.this) { at line 116
+refPoint=onward;LSynchronizedRGB;testType6;monitorenter;61;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 6    +  void testType6() { at line 58
+refPoint=onward;LSynchronizedRGB$SyncTest;getNa;testType6;60;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 6    +  void testType6() { at line 58
+refPoint=onward;LSynchronizedRGB$SyncTest;getNa;getType7;94;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 7    +    synchronized void getType7() { at line 84
+refPoint=onward;LSynchronizedRGB$SyncTest;getCa;getType7;98;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 7    +    synchronized void getType7() { at line 84
+refPoint=onward;LSynchronizedRGB;startNewTask;getN;76;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 4A    +        t.getN(); at line 76
+refPoint=pre;LSynchronizedRGB$SyncTest;cleanup;invert;120;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 4B    +              sr.invert(); at line 120
+refPoint=pre;LSynchronizedRGB;startNewTask;invert;75;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 4B    +        tip.invert(); at line 75
+refPoint=onward;LSynchronizedRGB$SyncTest;grayscale;type4C;103;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 4C (4c)    +      grayscale(); at line 103
+refPoint=pre;LSynchronizedRGB;set;cleanup;117;LSynchronizedRGB$SyncTest;LSynchronizedRGB ---- TYPE 4C (4c)    +        tip.invert(); at line 75
+

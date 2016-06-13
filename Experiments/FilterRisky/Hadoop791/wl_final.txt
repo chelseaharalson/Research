@@ -1,0 +1,2 @@
+Lorg/apache/hadoop/mapred/TaskTracker$TaskInProgress;Lorg/apache/hadoop/mapred/TaskTracker
+Lorg/apache/hadoop/mapred/TaskTracker;Lorg/apache/hadoop/mapred/TaskTracker$TaskInProgress

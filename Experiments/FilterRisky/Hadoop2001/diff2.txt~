@@ -1,0 +1,129 @@
+--- JobTracker_0131.java	2007-07-23 17:43:48.000000000 -0400
++++ JobTracker_0140.java	2007-08-16 19:42:52.000000000 -0400
+@@ -97,7 +99,7 @@
+    * @param conf configuration for the JobTracker.
+    * @throws IOException
+    */
+-  public static void startTracker(Configuration conf) throws IOException {
++  public static void startTracker(JobConf conf) throws IOException {
+     if (tracker != null)
+       throw new IOException("JobTracker already running.");
+     runTracker = true;
+@@ -151,7 +153,6 @@
+    * but that haven't reported back yet.
+    * Note that I included a stop() method, even though there is no place
+    * where JobTrackers are cleaned up.
+-   * @author Owen O'Malley
+    */
+   private class ExpireLaunchingTasks implements Runnable {
+     private volatile boolean shouldRun = true;
+@@ -222,7 +223,7 @@
+     public void addNewTask(String taskName) {
+       synchronized (launchingTasks) {
+         launchingTasks.put(taskName, 
+-                           new Long(System.currentTimeMillis()));
++                           System.currentTimeMillis());
+       }
+     }
+       
+@@ -336,8 +337,8 @@
+           List<JobInProgress> retiredJobs = new ArrayList<JobInProgress>();
+           long retireBefore = System.currentTimeMillis() - 
+             RETIRE_JOB_INTERVAL;
+-          synchronized (jobsByArrival) {
+-            for(JobInProgress job: jobsByArrival) {
++          synchronized (jobsByPriority) {
++            for(JobInProgress job: jobsByPriority) {
+               if (job.getStatus().getRunState() != JobStatus.RUNNING &&
+                   job.getStatus().getRunState() != JobStatus.PREP &&
+                   (job.getFinishTime()  < retireBefore)) {
+@@ -348,13 +349,13 @@
+           if (!retiredJobs.isEmpty()) {
+             synchronized (JobTracker.this) {
+               synchronized (jobs) {
+-                synchronized (jobsByArrival) {
++                synchronized (jobsByPriority) {
+                   synchronized (jobInitQueue) {
+                     for (JobInProgress job: retiredJobs) {
+                       removeJobTasks(job);
+                       jobs.remove(job.getProfile().getJobId());
+                       jobInitQueue.remove(job);
+-                      jobsByArrival.remove(job);
++                      jobsByPriority.remove(job);
+                       String jobUser = job.getProfile().getUser();
+                       synchronized (userToJobsMap) {
+                         ArrayList<JobInProgress> userJobs =
+@@ -518,7 +524,7 @@
+ 
+   // All the known jobs.  (jobid->JobInProgress)
+   Map<String, JobInProgress> jobs = new TreeMap<String, JobInProgress>();
+-  List<JobInProgress> jobsByArrival = new ArrayList<JobInProgress>();
++  List<JobInProgress> jobsByPriority = new ArrayList<JobInProgress>();
+ 
+   // (user -> list of JobInProgress)
+   TreeMap<String, ArrayList<JobInProgress>> userToJobsMap =
+@@ -902,7 +911,7 @@
+     // in memory; information about the purged jobs is available via
+     // JobHistory.
+     synchronized (jobs) {
+-      synchronized (jobsByArrival) {
++      synchronized (jobsByPriority) {
+         synchronized (jobInitQueue) {
+           synchronized (userToJobsMap) {
+             String jobUser = job.getProfile().getUser();
+@@ -943,7 +952,7 @@
+                   userJobs.remove(0);
+                   jobs.remove(rjob.getProfile().getJobId());
+                   jobInitQueue.remove(rjob);
+-                  jobsByArrival.remove(rjob);
++                  jobsByPriority.remove(rjob);
+                     
+                   LOG.info("Retired job with id: '" + 
+                            rjob.getProfile().getJobId() + "' of user: '" +
+@@ -1296,11 +1313,11 @@
+     // task.
+     //
+        
+-    synchronized (jobsByArrival) {
++    synchronized (jobsByPriority) {
+       if (numMaps < maxMapLoad) {
+ 
+         int totalNeededMaps = 0;
+-        for (Iterator it = jobsByArrival.iterator(); it.hasNext();) {
++        for (Iterator it = jobsByPriority.iterator(); it.hasNext();) {
+           JobInProgress job = (JobInProgress) it.next();
+           if (job.getStatus().getRunState() != JobStatus.RUNNING) {
+             continue;
+@@ -1456,6 +1492,32 @@
+     return job.getStatus();
+   }
+ 
++  /**
++   * Sort jobs by priority and then by start time.
++   */
++  public void resortPriority() {
++    Comparator<JobInProgress> comp = new Comparator<JobInProgress>() {
++      public int compare(JobInProgress o1, JobInProgress o2) {
++        int res = o1.getPriority().compareTo(o2.getPriority());
++        if(res == 0) {
++          if(o1.getStartTime() < o2.getStartTime())
++            res = -1;
++          else
++            res = (o1.getStartTime()==o2.getStartTime() ? 0 : 1);
++        }
++          
++        return res;
++      }
++    };
++    
++    synchronized(jobsByPriority) {
++      Collections.sort(jobsByPriority, comp);
++    }
++    synchronized (jobInitQueue) {
++      Collections.sort(jobInitQueue, comp);
++    }
++  }
++
+   public synchronized ClusterStatus getClusterStatus() {
+     synchronized (taskTrackers) {
+       return new ClusterStatus(taskTrackers.size(),

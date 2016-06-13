@@ -1,0 +1,30 @@
+--- JobTracker_0200.java	2009-04-09 01:15:32.000000000 -0400
++++ JobTracker_0210.java	2009-09-01 16:44:55.000000000 -0400
+@@ -3049,6 +3172,64 @@
+   /**
+    * Fail a job and inform the listeners. Other components in the framework 
+    * should use this to fail a job.
+    */
++  public synchronized void failJob(JobInProgress job) {
++    if (null == job) {
++      LOG.info("Fail on null job is not valid");
++      return;
++    }
++         
++    JobStatus prevStatus = (JobStatus)job.getStatus().clone();
++    LOG.info("Failing job " + job.getJobID());
++    job.fail();
++     
++    // Inform the listeners if the job state has changed
++    JobStatus newStatus = (JobStatus)job.getStatus().clone();
++    if (prevStatus.getRunState() != newStatus.getRunState()) {
++      JobStatusChangeEvent event = 
++        new JobStatusChangeEvent(job, EventType.RUN_STATE_CHANGED, prevStatus, 
++            newStatus);
++      updateJobInProgressListeners(event);
++    }
++  }
++  
+   /**
+    * Set the priority of a job
+    * @param jobid id of the job

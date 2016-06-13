@@ -1,0 +1,81 @@
+--- SynchronizedRGB_old.java	2015-11-15 16:01:28.535672801 -0500
++++ SynchronizedRGB_n.java	2015-11-15 16:01:34.863748699 -0500
+@@ -55,7 +55,7 @@
+     name = "Inverse of " + name;
+   }
+ 
+-  synchronized public void testType6() {
++  public void testType6() {
+     SyncTest t6 = new SyncTest();
+     String p = t6.getNa();
+     synchronized (t6) {
+@@ -66,12 +66,14 @@
+       }
+     }
+   }
+-
+-  public void type1Example() {
+-    SynchronizedRGB tip1 = new SynchronizedRGB(this.red, this.green, this.blue, this.name);
+-    synchronized (tip1) {
++  
++  public void startNewTask() {
++    SynchronizedRGB tip = new SynchronizedRGB(this.red, this.green, this.blue, this.name);
++    SyncTest t = new SyncTest();
++    synchronized (tip) {
+       try {
+-        tip1.invert();
++        tip.invert();
++        t.getN();
+       } catch (Throwable ie) {
+       }
+     }
+@@ -79,11 +81,15 @@
+ 
+   
+   public class SyncTest {
+-    void getType7() {
++    synchronized void getType7() {
+       red = 255 - red;
+     }
+ 
+     private String n;
++    public synchronized String getN() {
++      return n;
++    }
++
+     public synchronized String getNa() {
+       getType7();
+       return n;
+@@ -92,10 +98,31 @@
+       getType7();
+       return n;
+     }
+-
++    
++    public void type4C() {
++      grayscale();
++    }
++    
++    public void grayscale() {
++      red = 255 - red;
++      green = 255 - green;
++      blue = 255 - blue;
++      name = "Inverse of " + name;
++    }
++    
+     SynchronizedRGB sr;
+     void cleanup() {
+       int taskId = sr.getRGB();
++      synchronized (SynchronizedRGB.this) {
++         sr.set(red, green, blue, name);
++         synchronized (this) {
++           try {
++              sr.invert();
++           } 
++           catch (Throwable ie) {
++           }
++         }
++      }
+     }
+   }
+ }

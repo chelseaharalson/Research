@@ -45,7 +45,6 @@ import com.ibm.wala.ipa.cfg.ExplodedInterproceduralCFG;
 import com.ibm.wala.ipa.cha.ClassHierarchy;
 import com.ibm.wala.ipa.cha.ClassHierarchyException;
 import com.ibm.wala.ipa.cha.IClassHierarchy;
-import com.ibm.wala.ipa.slicer.Statement;
 import com.ibm.wala.analysis.typeInference.TypeInference;
 import com.ibm.wala.shrikeCT.InvalidClassFileException; 
 import com.ibm.wala.ssa.IR;
@@ -71,26 +70,14 @@ import com.ibm.wala.util.intset.IntIterator;
 import com.ibm.wala.util.io.CommandLine;
 import com.ibm.wala.util.strings.StringStuff;
 import com.ibm.wala.util.warnings.Warnings;
+
+
 import java.util.HashMap;
 /**
  * Driver that constructs a call graph for an application specified via a scope file.  
  * Useful for getting some code to copy-paste.    
  */
-public class GenerateWatchList {
-  
-    static class Double<T1, T2> {
-      T1 val1;
-      T2 val2;
-  
-       public Double(T1 v1, T2 v2) {
-           val1 = v1;
-           val2 = v2; 
-       }
-
-      public Double() {
-        // TODO Auto-generated constructor stub
-      } 
-    }
+public class GenerateLockTypes {
 
     static String searchDirection = " ";
     static boolean SUBCLASS_HANDLING = false;
@@ -162,10 +149,6 @@ public class GenerateWatchList {
     static HashMap<SSAInstruction, IClass> lockingInstructionsAllTypes = new  HashMap<SSAInstruction, IClass>();
 
     static HashMap<IClass, HashSet<IClass>> watchList = new HashMap<IClass, HashSet<IClass>>();
-    
-    static HashMap<IClass, Double<HashSet<IClass>, Integer>> watchListForCsv = new HashMap<IClass, Double<HashSet<IClass>, Integer>>();
-    
-    static Integer TOTALPAIRS = 0;
 
     static String enclosingClass;
 
@@ -197,6 +180,10 @@ public class GenerateWatchList {
 
     // We need this to use in isAssignableFrom. Usin the full class name did not work!
     static Class ssaInvokeInstructionClass = null;
+
+    static FileWriter wlCSV;
+    
+    static FileWriter allLockTypes;
 
     static private void initDataStructures() {
          lockingInstructions = new  HashMap<SSAInstruction,OrdinalSet<? extends InstanceKey>>();
@@ -323,7 +310,11 @@ public class GenerateWatchList {
     Properties p = CommandLine.parse(args);
     String scopeFile = p.getProperty("scopeFile");
     String watchListFile = p.getProperty("watchListFile");
-    String watchListCSV = p.getProperty("watchListCSV");
+
+    wlCSV = new FileWriter(watchListFile.substring(0, (watchListFile.indexOf(".") > 0 ? watchListFile.indexOf(".") :  watchListFile.length())) + ".csv"); 
+    
+    allLockTypes = new FileWriter(watchListFile.substring(0, (watchListFile.indexOf(".") > 0 ? watchListFile.indexOf(".") :  watchListFile.length())) + "AllLockTypes.csv"); 
+
     entryClass = p.getProperty("entryClass");
     mainClass = p.getProperty("mainClass");
     targetClassNames = p.getProperty("targetClassNames");
@@ -403,6 +394,7 @@ public class GenerateWatchList {
 
     System.out.println("CHECKING FOR NESTED PAIRS:");
 
+    wlCSV.append("Type A,Type B,A:B,B:A");
     java.util.Set<IClass> lockKeys = lockingInstructionsAll.keySet();
     for(IClass lockType1: lockKeys) {
      for(IClass lockType2: lockKeys) {
@@ -461,7 +453,8 @@ public class GenerateWatchList {
             if (ispb) publicEncPairsRegular++;
   } 
     }
-    System.out.println("Total number of pairs=" + totalPairsRegular);
+    System.out.println("Order: " + lockType1 + "," + lockType2); 
+    System.out.println("Total number of enclosing pairs=" + totalPairsRegular);
     System.out.println("# of Public enclosing pairs=" + publicEncPairsRegular);
 
  
@@ -477,35 +470,51 @@ public class GenerateWatchList {
             if (ispb) publicEncPairsReversed++;
         } 
     }
-    System.out.println("Total number of pairs=" + totalPairsReversed);
+    System.out.println("Order: " + lockType2 + "," + lockType1); 
+    System.out.println("Total number of reverse enclosing pairs=" + totalPairsReversed);
     System.out.println("# of Public enclosing pairs=" + publicEncPairsReversed);
 
-    TOTALPAIRS = 0;
-    TOTALPAIRS = totalPairsRegular + totalPairsReversed;
-    System.out.println("TOTAL NUMBER=" + TOTALPAIRS);
-    if (totalPairsRegular + totalPairsReversed != 0) {
-       if (totalPairsRegular >= totalPairsReversed) {
-          addToSet(watchList, lockType1, lockType2);
-          addToSetForCsv(watchListForCsv, lockType1, lockType2, TOTALPAIRS);
-       }
-       else {
-          addToSet(watchList, lockType2, lockType1);
-          addToSetForCsv(watchListForCsv, lockType2, lockType1, TOTALPAIRS);
-       }
+    if (totalPairsRegular >= 0 || totalPairsReversed >= 0)
+       dump(typeName(lockType1), typeName(lockType2), totalPairsRegular, totalPairsReversed); 
+     
+    addToSet(watchList, lockType1, lockType2);
+    addToSet(watchList, lockType2, lockType1);
+
      }
-    }
     }
 
     writeWatchList(watchListFile);
-    generateCSVfile(watchListCSV);
+    
+    dumpLockTypes(lockTypes);
       
     long end = System.currentTimeMillis();
     System.out.println("done");
     System.out.println("took " + (end-start) + "ms");
     System.out.println(CallGraphStats.getStats(cg));
 
-  }
 
+     wlCSV.close();
+     allLockTypes.close();
+ 
+    }
+
+
+
+    static private void dump(String l1, String l2, int n1, int n2) throws IOException {
+       wlCSV.append("\n" + l1 + "," + l2 + "," + n1 + "," + n2);
+    }
+    
+    static private void dumpLockTypes(java.util.Set<IClass> lockTypes) throws IOException {
+      Set<IClass> ltAll = new HashSet<IClass>();
+      for (IClass lType : lockTypes) {
+        if (!ltAll.contains(lType)) {
+          ltAll.add(lType);
+        }
+      }
+      for (IClass lt : ltAll) {
+        allLockTypes.append("\n" + typeName(lt));
+      }
+    }
 
     static private boolean filterSyncInst(SSAInstruction inst) {
   String st = prettyPrint(inst);
@@ -536,7 +545,7 @@ public class GenerateWatchList {
       for(IClass t1 : lt) {
           HashSet<IClass> lt2 = watchList.get(t1);
           for(IClass t2: lt2) {
-              wl.append(typeName(t1) + ";" + typeName(t2) + "\n"); 
+            wl.append(typeName(t1) + ";" + typeName(t2) + "\n"); 
           }
       } 
       wl.close();
@@ -1881,6 +1890,7 @@ public class GenerateWatchList {
                         else {//transitive
                             //System.out.println("transitive");              
                             HashSet<SSAInstruction> cr = reachesLocking.get(current);
+                            if (cr != null)
                             for(SSAInstruction o : cr ) {
                                 //System.out.println("candidate enclosed " + prettyPrint((SSAInstruction)o));  
                                 if (lockingInstructions.containsKey(o)) { 
@@ -1898,6 +1908,7 @@ public class GenerateWatchList {
                       if (!lockingInstructions.containsKey(current)) {
                             //System.out.println("Adding this call site to INDIRECT reachesLocking");
                             HashSet<SSAInstruction> cr = reachesLocking.get(current);
+                            if (cr != null)
                             for(SSAInstruction o : cr ) {     
                                    //System.out.println(prettyPrint((SSAInstruction)o));                         
                                    if (addToSet(reachesLocking, csins, o))
@@ -2149,21 +2160,6 @@ public class GenerateWatchList {
         oneToMany.put(key, set);
         return result;
   }
-    
-    // watchList, locktype1, locktype2
-    private static boolean addToSetForCsv(HashMap<IClass, Double<HashSet<IClass>, Integer>> oneToMany, IClass key, IClass value, Integer totalPairs) {
-      Double<HashSet<IClass>, Integer> finalSet = new Double<HashSet<IClass>, Integer>();
-      //HashSet<IClass> set; 
-      if (oneToMany.containsKey(key)) 
-          finalSet  = oneToMany.remove(key);
-      else 
-          finalSet.val1  = new HashSet<IClass>();
-      boolean result = !finalSet.val1.contains(value);
-      finalSet.val1.add(value);
-      finalSet.val2 = totalPairs;
-      oneToMany.put(key, finalSet);
-      return result;
-}
 
     private static boolean addToSet(HashMap<SSAInstruction, HashSet<Quad>> oneToMany, SSAInstruction key, Quad value) {
         HashSet<Quad> set; 
@@ -2780,6 +2776,19 @@ public class GenerateWatchList {
         StringStuff.deployment2CanonicalTypeString(entryClass)));
     IClass klass = cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
         StringStuff.deployment2CanonicalTypeString(entryClass)));
+    if (klass == null) {
+        klass = cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Extension,
+        StringStuff.deployment2CanonicalTypeString(entryClass)));
+        if (klass == null) {
+              klass = cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Primordial,
+        StringStuff.deployment2CanonicalTypeString(entryClass)));
+              if (klass == null) {
+             System.out.println("Couldn't find class " + StringStuff.deployment2CanonicalTypeString(entryClass));
+                 return result;
+              }
+          
+        }
+    }
     for (IMethod m : klass.getDeclaredMethods()) {
       System.out.println("Adding method " + m + " as an entry point");
       //if (m.isPublic()) {
@@ -2788,24 +2797,4 @@ public class GenerateWatchList {
     }
     return result;
   }
- 
-  
-  public static void generateCSVfile(String watchListFile) {
-    try {
-      FileWriter wl = new FileWriter(watchListFile);
-      java.util.Set<IClass> lt = watchListForCsv.keySet();
-      for(IClass t1 : lt) {
-        Double<HashSet<IClass>, Integer> lt2 = watchListForCsv.get(t1);
-          for(IClass t2: lt2.val1) {
-            Integer tp = lt2.val2;
-            wl.append(typeName(t1) + ";" + typeName(t2) + ";" + tp + "\n"); 
-          }
-      } 
-      wl.close();
-    }
-    catch(IOException e) {
-         e.printStackTrace();
-    } 
-  }
-
 }

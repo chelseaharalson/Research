@@ -1,0 +1,2411 @@
+--- FSNamesystem_0172.java	2008-08-13 01:29:47.000000000 -0400
++++ FSNamesystem_0180.java	2008-08-14 15:48:25.000000000 -0400
+@@ -20,6 +20,7 @@
+ import org.apache.commons.logging.*;
+ 
+ import org.apache.hadoop.conf.*;
++import org.apache.hadoop.dfs.BlocksMap.BlockInfo;
+ import org.apache.hadoop.dfs.BlocksWithLocations.BlockWithLocations;
+ import org.apache.hadoop.dfs.namenode.metrics.FSNamesystemMBean;
+ import org.apache.hadoop.security.UnixUserGroupInformation;
+@@ -31,10 +32,13 @@
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.net.NetworkTopology;
+ import org.apache.hadoop.net.ScriptBasedMapping;
++import org.apache.hadoop.dfs.LeaseManager.Lease;
+ import org.apache.hadoop.fs.ContentSummary;
++import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.permission.*;
+ import org.apache.hadoop.ipc.Server;
++import org.apache.hadoop.io.IOUtils;
+ 
+ import java.io.BufferedWriter;
+ import java.io.File;
+@@ -42,11 +46,11 @@
+ import java.io.IOException;
+ import java.io.PrintWriter;
+ import java.io.DataOutputStream;
++import java.net.InetAddress;
+ import java.net.InetSocketAddress;
+ import java.util.*;
+ import java.util.Map.Entry;
+ import java.util.concurrent.LinkedBlockingQueue;
+-import java.text.SimpleDateFormat;
+ 
+ import javax.management.NotCompliantMBeanException;
+ import javax.management.ObjectName;
+@@ -67,11 +71,48 @@
+  ***************************************************/
+ class FSNamesystem implements FSConstants, FSNamesystemMBean {
+   public static final Log LOG = LogFactory.getLog("org.apache.hadoop.fs.FSNamesystem");
++  public static final String AUDIT_FORMAT =
++    "ugi=%s\t" +  // ugi
++    "ip=%s\t" +   // remote IP
++    "cmd=%s\t" +  // command
++    "src=%s\t" +  // src path
++    "dst=%s\t" +  // dst path (optional)
++    "perm=%s";    // permissions (optional)
++
++  private static final ThreadLocal<Formatter> auditFormatter =
++    new ThreadLocal<Formatter>() {
++      protected Formatter initialValue() {
++        return new Formatter(new StringBuilder(AUDIT_FORMAT.length() * 4));
++      }
++  };
++
++  private static final void logAuditEvent(UserGroupInformation ugi,
++      InetAddress addr, String cmd, String src, String dst,
++      FileStatus stat) {
++    final Formatter fmt = auditFormatter.get();
++    ((StringBuilder)fmt.out()).setLength(0);
++    auditLog.info(fmt.format(AUDIT_FORMAT, ugi, addr, cmd, src, dst,
++                  (stat == null)
++                    ? null
++                    : stat.getOwner() + ':' + stat.getGroup() + ':' +
++                      stat.getPermission()
++          ).toString());
++
++  }
++
++  public static final Log auditLog = LogFactory.getLog(
++      "org.apache.hadoop.fs.FSNamesystem.audit");
+ 
+   private boolean isPermissionEnabled;
+   private UserGroupInformation fsOwner;
+   private String supergroup;
+   private PermissionStatus defaultPermission;
++  // FSNamesystemMetrics counter variables
++  private FSNamesystemMetrics myFSMetrics;
++  private long capacityTotal = 0L, capacityUsed = 0L, capacityRemaining = 0L;
++  private int totalLoad = 0;
++  private long pendingReplicationBlocksCount = 0L, 
++    underReplicatedBlocksCount = 0L, scheduledReplicationBlocksCount = 0L;
+ 
+   //
+   // Stores the correct file name hierarchy
+@@ -79,11 +120,15 @@
+   FSDirectory dir;
+ 
+   //
+-  // Stores the block-->datanode(s) map.  Updated only in response
+-  // to client-sent information.
+   // Mapping: Block -> { INode, datanodes, self ref } 
++  // Updated only in response to client-sent information.
+   //
+   BlocksMap blocksMap = new BlocksMap();
++
++  //
++  // Store blocks-->datanodedescriptor(s) map of corrupt replicas
++  //
++  CorruptReplicasMap corruptReplicas = new CorruptReplicasMap();
+     
+   /**
+    * Stores the datanode -> block map.  
+@@ -128,15 +173,6 @@
+     new TreeMap<String, Collection<Block>>();
+ 
+   //
+-  // Stats on overall usage
+-  //
+-  long totalCapacity = 0L, totalUsed=0L, totalRemaining = 0L;
+-
+-  // total number of connections per live datanode
+-  int totalLoad = 0;
+-
+-
+-  //
+   // For the HTTP browsing interface
+   //
+   StatusHttpServer infoServer;
+@@ -163,13 +199,7 @@
+   private UnderReplicatedBlocks neededReplications = new UnderReplicatedBlocks();
+   private PendingReplicationBlocks pendingReplications;
+ 
+-  //
+-  // Used for handling lock-leases
+-  // Mapping: leaseHolder -> Lease
+-  //
+-  private Map<StringBytesWritable, Lease> leases = new TreeMap<StringBytesWritable, Lease>();
+-  // Set of: Lease
+-  private SortedSet<Lease> sortedLeases = new TreeSet<Lease>();
++  LeaseManager leaseManager = new LeaseManager(this); 
+ 
+   //
+   // Threaded object that checks to see if we have been
+@@ -227,22 +257,12 @@
+   private HostsFileReader hostsReader; 
+   private Daemon dnthread = null;
+ 
+-  // can fs-image be rolled?
+-  volatile private CheckpointStates ckptState = CheckpointStates.START; 
+-
+-  private static final SimpleDateFormat DATE_FORM =
+-    new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+-
+   private long maxFsObjects = 0;          // maximum number of fs objects
+ 
+   /**
+    * The global generation stamp for this file system. 
+-   * Valid values start from 1000.
+    */
+-  private GenerationStamp generationStamp = new GenerationStamp(1000);
+-
+-  private long softLimit = LEASE_SOFTLIMIT_PERIOD;
+-  private long hardLimit = LEASE_HARDLIMIT_PERIOD;
++  private final GenerationStamp generationStamp = new GenerationStamp();
+ 
+   // Ask Datanode only up to this many blocks to delete.
+   private int blockInvalidateLimit = FSConstants.BLOCK_INVALIDATE_CHUNK;
+@@ -254,6 +274,7 @@
+     try {
+       initialize(nn, conf);
+     } catch(IOException e) {
++      LOG.error(getClass().getSimpleName() + " initialization failed.", e);
+       close();
+       throw e;
+     }
+@@ -269,6 +290,7 @@
+ 
+     this.localMachine = nn.getNameNodeAddress().getHostName();
+     this.port = nn.getNameNodeAddress().getPort();
++    this.registerMBean(conf); // register the MBean for the FSNamesystemStutus
+     this.dir = new FSDirectory(this, conf);
+     StartupOption startOpt = NameNode.getStartupOption(conf);
+     this.dir.loadFSImage(getNamespaceDirs(conf), startOpt);
+@@ -282,16 +304,13 @@
+                             conf.getInt("dfs.replication.pending.timeout.sec", 
+                                         -1) * 1000L);
+     this.hbthread = new Daemon(new HeartbeatMonitor());
+-    this.lmthread = new Daemon(new LeaseMonitor());
++    this.lmthread = new Daemon(leaseManager.createMonitor());
+     this.replthread = new Daemon(new ReplicationMonitor());
+     this.resthread = new Daemon(new ResolutionMonitor());
+     hbthread.start();
+     lmthread.start();
+     replthread.start();
+     resthread.start();
+-    
+-    this.registerMBean(); // register the MBean for the FSNamesystemStutus
+-
+ 
+     this.hostsReader = new HostsFileReader(conf.get("dfs.hosts",""),
+                                            conf.get("dfs.hosts.exclude",""));
+@@ -325,8 +344,8 @@
+         conf.get("dfs.datanode.https.address", infoHost + ":" + 50475));
+     this.infoServer.setAttribute("datanode.https.port",
+         datanodeSslPort.getPort());
+-    this.infoServer.setAttribute("name.system", this);
+     this.infoServer.setAttribute("name.node", nn);
++    this.infoServer.setAttribute("name.system.image", getFSImage());
+     this.infoServer.setAttribute("name.conf", conf);
+     this.infoServer.addServlet("fsck", "/fsck", FsckServlet.class);
+     this.infoServer.addServlet("getimage", "/getimage", GetImageServlet.class);
+@@ -341,12 +360,12 @@
+   }
+ 
+   static Collection<File> getNamespaceDirs(Configuration conf) {
+-    String[] dirNames = conf.getStrings("dfs.name.dir");
+-    if (dirNames == null)
+-      dirNames = new String[] {"/tmp/hadoop/dfs/name"};
+-    Collection<File> dirs = new ArrayList<File>(dirNames.length);
+-    for(int idx = 0; idx < dirNames.length; idx++) {
+-      dirs.add(new File(dirNames[idx]));
++    Collection<String> dirNames = conf.getStringCollection("dfs.name.dir");
++    if (dirNames.isEmpty())
++      dirNames.add("/tmp/hadoop/dfs/name");
++    Collection<File> dirs = new ArrayList<File>(dirNames.size());
++    for(String name : dirNames) {
++      dirs.add(new File(name));
+     }
+     return dirs;
+   }
+@@ -464,13 +483,11 @@
+           lmthread.interrupt();
+           lmthread.join(3000);
+         }
++        dir.close();
+       } catch (InterruptedException ie) {
+-      } finally {
+-        try {
+-          dir.close();
+-        } catch (IOException ex) {
+-          // do nothing
+-        }
++      } catch (IOException ie) {
++        LOG.error("Error closing FSDirectory", ie);
++        IOUtils.cleanup(LOG, dir);
+       }
+     }
+   }
+@@ -548,121 +565,6 @@
+                               curReplicasDelta, expectedReplicasDelta);
+   }
+ 
+-  /**
+-   * Used only during DFS upgrade for block level CRCs (HADOOP-1134).
+-   * This returns information for a given blocks that includes:
+-   * <li> full path name for the file that contains the block.
+-   * <li> offset of first byte of the block.
+-   * <li> file length and length of the block.
+-   * <li> all block locations for the crc file (".file.crc").
+-   * <li> replication for crc file.
+-   * When replicas is true, it includes replicas of the block.
+-   */
+-  public synchronized BlockCrcInfo blockCrcInfo(
+-                           Block block,
+-                           BlockCrcUpgradeObjectNamenode namenodeUpgradeObj,
+-                           boolean replicas) {
+-    BlockCrcInfo crcInfo = new BlockCrcInfo();
+-    crcInfo.status = BlockCrcInfo.STATUS_ERROR;
+-    
+-    INodeFile fileINode = blocksMap.getINode(block);
+-    if ( fileINode == null || fileINode.isDirectory() ) {
+-      // Most probably reason is that this block does not exist
+-      if (blocksMap.getStoredBlock(block) == null) {
+-        crcInfo.status = BlockCrcInfo.STATUS_UNKNOWN_BLOCK;
+-      } else {
+-        LOG.warn("getBlockCrcInfo(): Could not find file for " + block);
+-      }
+-      return crcInfo;
+-    }
+-
+-    crcInfo.fileName = "localName:" + fileINode.getLocalName();
+-    
+-    // Find the offset and length for this block.
+-    Block[] fileBlocks = fileINode.getBlocks();
+-    crcInfo.blockLen = -1;
+-    if ( fileBlocks != null ) {
+-      for ( Block b:fileBlocks ) {
+-        if ( block.equals(b) ) {
+-          crcInfo.blockLen = b.getNumBytes();
+-        }
+-        if ( crcInfo.blockLen < 0 ) {
+-          crcInfo.startOffset += b.getNumBytes();
+-        }
+-        crcInfo.fileSize += b.getNumBytes();
+-      }
+-    }
+-
+-    if ( crcInfo.blockLen < 0 ) {
+-      LOG.warn("blockCrcInfo(): " + block + 
+-               " could not be found in blocks for " + crcInfo.fileName);
+-      return crcInfo;
+-    }
+-    
+-    String fileName = fileINode.getLocalName();    
+-    if ( fileName.startsWith(".") && fileName.endsWith(".crc") ) {
+-      crcInfo.status = BlockCrcInfo.STATUS_CRC_BLOCK;
+-      return crcInfo;
+-    }
+-
+-    if (replicas) {
+-      // include block replica locations, instead of crcBlocks
+-      crcInfo.blockLocationsIncluded = true;
+-      
+-      DatanodeInfo[] dnInfo = new DatanodeInfo[blocksMap.numNodes(block)];
+-      Iterator<DatanodeDescriptor> it = blocksMap.nodeIterator(block);
+-      for (int i=0; it != null && it.hasNext(); i++ ) {
+-        dnInfo[i] = new DatanodeInfo(it.next());
+-      }
+-      crcInfo.blockLocations = new LocatedBlock(block, dnInfo, 
+-                                                crcInfo.startOffset);
+-    } else {
+-
+-      //Find CRC file
+-      BlockCrcUpgradeObjectNamenode.INodeMapEntry entry =
+-                                namenodeUpgradeObj.getINodeMapEntry(fileINode);
+-      
+-      if (entry == null || entry.parent == null) {
+-        LOG.warn("Could not find parent INode for " + fileName + "  " + block);
+-        return crcInfo;
+-      }
+-      
+-      crcInfo.fileName = entry.getAbsoluteName();
+-      
+-      String crcName = "." + fileName + ".crc";
+-      INode iNode = entry.getParentINode().getChild(crcName);
+-      if (iNode == null || iNode.isDirectory()) {
+-        // Should we log this?
+-        crcInfo.status = BlockCrcInfo.STATUS_NO_CRC_DATA;
+-        return crcInfo;
+-      }
+-
+-      INodeFile crcINode = (INodeFile)iNode;
+-      Block[] blocks = crcINode.getBlocks();
+-      if ( blocks == null )  {
+-        LOG.warn("getBlockCrcInfo(): could not find blocks for crc file for " +
+-                 crcInfo.fileName);
+-        return crcInfo;
+-      }
+-
+-      crcInfo.crcBlocks = new LocatedBlock[ blocks.length ];
+-      for (int i=0; i<blocks.length; i++) {
+-        DatanodeInfo[] dnArr = new DatanodeInfo[ blocksMap.numNodes(blocks[i]) ];
+-        int idx = 0;
+-        for (Iterator<DatanodeDescriptor> it = blocksMap.nodeIterator(blocks[i]); 
+-        it.hasNext();) { 
+-          dnArr[ idx++ ] = it.next();
+-        }
+-        crcInfo.crcBlocks[i] = new LocatedBlock(blocks[i], dnArr);
+-      }
+-
+-      crcInfo.crcReplication = crcINode.getReplication();
+-    }
+-    
+-    crcInfo.status = BlockCrcInfo.STATUS_DATA_BLOCK;
+-    return crcInfo;
+-  }
+-  
+   /////////////////////////////////////////////////////////
+   //
+   // These methods are called by secondary namenodes
+@@ -753,6 +655,12 @@
+     checkOwner(src);
+     dir.setPermission(src, permission);
+     getEditLog().logSync();
++    if (auditLog.isInfoEnabled()) {
++      final FileStatus stat = dir.getFileInfo(src);
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "setPermission", src, null, stat);
++    }
+   }
+ 
+   /**
+@@ -773,6 +681,12 @@
+     }
+     dir.setOwner(src, username, group);
+     getEditLog().logSync();
++    if (auditLog.isInfoEnabled()) {
++      final FileStatus stat = dir.getFileInfo(src);
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "setOwner", src, null, stat);
++    }
+   }
+ 
+   /**
+@@ -810,8 +724,14 @@
+     if (length < 0) {
+       throw new IOException("Negative length is not supported. File: " + src );
+     }
+-    return getBlockLocationsInternal(dir.getFileINode(src), offset, length,
+-        Integer.MAX_VALUE);  
++    final LocatedBlocks ret = getBlockLocationsInternal(dir.getFileINode(src),
++        offset, length, Integer.MAX_VALUE);  
++    if (auditLog.isInfoEnabled()) {
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "open", src, null, null);
++    }
++    return ret;
+   }
+ 
+   private synchronized LocatedBlocks getBlockLocationsInternal(INodeFile inode,
+@@ -851,15 +771,26 @@
+     do {
+       // get block locations
+       int numNodes = blocksMap.numNodes(blocks[curBlk]);
+-      DatanodeDescriptor[] machineSet = new DatanodeDescriptor[numNodes];
+-      if (numNodes > 0) {
++      Collection<DatanodeDescriptor> nodesCorrupt = corruptReplicas.getNodes(
++                                                      blocks[curBlk]);
++      int numCorruptNodes = (nodesCorrupt == null) ? 0 : nodesCorrupt.size();
++      boolean blockCorrupt = (numCorruptNodes == numNodes);
++      int numMachineSet = blockCorrupt ? numNodes : 
++                            (numNodes - numCorruptNodes);
++      DatanodeDescriptor[] machineSet = new DatanodeDescriptor[numMachineSet];
++      if (numMachineSet > 0) {
+         numNodes = 0;
+         for(Iterator<DatanodeDescriptor> it = 
+             blocksMap.nodeIterator(blocks[curBlk]); it.hasNext();) {
+-          machineSet[numNodes++] = it.next();
++          DatanodeDescriptor dn = it.next();
++          boolean replicaCorrupt = ((nodesCorrupt != null) &&
++                                    nodesCorrupt.contains(dn));
++          if (blockCorrupt || (!blockCorrupt && !replicaCorrupt))
++            machineSet[numNodes++] = dn;
+         }
+       }
+-      results.add(new LocatedBlock(blocks[curBlk], machineSet, curPos));
++      results.add(new LocatedBlock(blocks[curBlk], machineSet, curPos,
++                  blockCorrupt));
+       curPos += blocks[curBlk].getNumBytes();
+       curBlk++;
+     } while (curPos < endOff 
+@@ -886,6 +817,11 @@
+                                 throws IOException {
+     boolean status = setReplicationInternal(src, replication);
+     getEditLog().logSync();
++    if (status && auditLog.isInfoEnabled()) {
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "setReplication", src, null, null);
++    }
+     return status;
+   }
+ 
+@@ -967,6 +903,12 @@
+     startFileInternal(src, permissions, holder, clientMachine, overwrite,
+                       replication, blockSize);
+     getEditLog().logSync();
++    if (auditLog.isInfoEnabled()) {
++      final FileStatus stat = dir.getFileInfo(src);
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "create", src, null, stat);
++    }
+   }
+ 
+   private synchronized void startFileInternal(String src,
+@@ -976,13 +918,13 @@
+                                               boolean overwrite,
+                                               short replication,
+                                               long blockSize
+-                                             	) throws IOException {
++                                              ) throws IOException {
+     NameNode.stateChangeLog.debug("DIR* NameSystem.startFile: file "
+                                   +src+" for "+holder+" at "+clientMachine);
+     if (isInSafeMode())
+       throw new SafeModeException("Cannot create file" + src, safeMode);
+     if (!isValidName(src)) {
+-      throw new IOException("Invalid file name: " + src);      	  
++      throw new IOException("Invalid file name: " + src);
+     }
+     if (isPermissionEnabled) {
+       if (overwrite && dir.exists(src)) {
+@@ -1001,7 +943,7 @@
+         // If the file is under construction , then it must be in our
+         // leases. Find the appropriate lease record.
+         //
+-        Lease lease = getLease(holder);
++        Lease lease = leaseManager.getLease(new StringBytesWritable(holder));
+         //
+         // We found the lease for this file. And surprisingly the original
+         // holder is trying to recreate this file. This should never occur.
+@@ -1015,7 +957,7 @@
+         //
+         // Find the original holder.
+         //
+-        lease = getLease(pendingFile.getClientName());
++        lease = leaseManager.getLease(pendingFile.clientName);
+         if (lease == null) {
+           throw new AlreadyBeingCreatedException(
+                                                  "failed to create file " + src + " for " + holder +
+@@ -1024,27 +966,17 @@
+         }
+         //
+         // If the original holder has not renewed in the last SOFTLIMIT 
+-        // period, then reclaim all resources and allow this request 
+-        // to proceed. Otherwise, prevent this request from creating file.
++        // period, then start lease recovery.
+         //
+         if (lease.expiredSoftLimit()) {
+-          synchronized (sortedLeases) {
+-            lease.releaseLocks();
+-            removeLease(lease.getHolder());
+-            LOG.info("startFile: Removing lease " + lease + " ");
+-            if (!sortedLeases.remove(lease)) {
+-              LOG.error("startFile: Unknown failure trying to remove " + lease + 
+-                        " from lease set.");
+-            }
+-          }
+-        } else {
+-          throw new AlreadyBeingCreatedException(
+-                                                 "failed to create file " + src + " for " + holder +
+-                                                 " on client " + clientMachine + 
+-                                                 ", because this file is already being created by " +
+-                                                 pendingFile.getClientName() + 
+-                                                 " on " + pendingFile.getClientMachine());
++          LOG.info("startFile: recover lease " + lease + ", src=" + src);
++          internalReleaseLease(lease, src);
+         }
++        throw new AlreadyBeingCreatedException("failed to create file " + src + " for " + holder +
++                                               " on client " + clientMachine + 
++                                               ", because this file is already being created by " +
++                                               pendingFile.getClientName() + 
++                                               " on " + pendingFile.getClientMachine());
+       }
+ 
+       try {
+@@ -1054,7 +986,7 @@
+       }
+       if (!dir.isValidToCreate(src)) {
+         if (overwrite) {
+-          delete(src);
++          delete(src, true);
+         } else {
+           throw new IOException("failed to create file " + src 
+                                 +" on client " + clientMachine
+@@ -1065,8 +997,6 @@
+       DatanodeDescriptor clientNode = 
+         host2DataNodeMap.getDatanodeByHost(clientMachine);
+ 
+-      addLease(src, holder);
+-
+       //
+       // Now we can add the name to the filesystem. This file has no
+       // blocks associated with it.
+@@ -1074,22 +1004,64 @@
+       checkFsObjectLimit();
+ 
+       // increment global generation stamp
+-      long genstamp = generationStamp.nextStamp();
+-
+-      INode newNode = dir.addFile(src, permissions,
++      long genstamp = nextGenerationStamp();
++      INodeFileUnderConstruction newNode = dir.addFile(src, permissions,
+           replication, blockSize, holder, clientMachine, clientNode, genstamp);
+       if (newNode == null) {
+         throw new IOException("DIR* NameSystem.startFile: " +
+                               "Unable to add file to namespace.");
+       }
++      leaseManager.addLease(newNode.clientName, src);
+     } catch (IOException ie) {
+       NameNode.stateChangeLog.warn("DIR* NameSystem.startFile: "
+                                    +ie.getMessage());
+       throw ie;
+     }
+ 
+-    NameNode.stateChangeLog.debug("DIR* NameSystem.startFile: "
++    if (NameNode.stateChangeLog.isDebugEnabled()) {
++      NameNode.stateChangeLog.debug("DIR* NameSystem.startFile: "
+                                   +"add "+src+" to namespace for "+holder);
++    }
++  }
++
++  /** append is not yet ready.  This method is for testing. */
++  void appendFileInternal(String src, String holder, String clientMachine
++      ) throws IOException {
++    if (NameNode.stateChangeLog.isDebugEnabled()) {
++      NameNode.stateChangeLog.debug("DIR* NameSystem.appendFile: file "
++          +src+" for "+holder+" at "+clientMachine);
++    }
++    if (isInSafeMode())
++      throw new SafeModeException("Cannot append file" + src, safeMode);
++    if (!isValidName(src)) {
++      throw new IOException("Invalid file name: " + src);
++    }
++    if (isPermissionEnabled) {
++      checkPathAccess(src, FsAction.WRITE);
++    }
++
++    try {
++      INodeFile f = dir.getFileINode(src);
++      //assume f != null && !f.isUnderConstruction() && lease does not exist
++      //TODO: remove the assumption 
++
++      DatanodeDescriptor clientNode = host2DataNodeMap.getDatanodeByHost(
++          clientMachine);
++      INodeFileUnderConstruction newnode = f.toINodeFileUnderConstruction(
++          holder, clientMachine, clientNode);
++
++      dir.replaceNode(src, f, newnode);
++      leaseManager.addLease(newnode.clientName, src);
++
++    } catch (IOException ie) {
++      NameNode.stateChangeLog.warn("DIR* NameSystem.appendFile: ", ie);
++      throw ie;
++    }
++
++    if (NameNode.stateChangeLog.isDebugEnabled()) {
++      NameNode.stateChangeLog.debug("DIR* NameSystem.appendFile: "
++          +"add "+src+" to namespace for "+holder);
++    }
+   }
+ 
+   /**
+@@ -1147,10 +1119,6 @@
+                             minReplication);
+     }
+ 
+-    for (DatanodeDescriptor dn : targets) {
+-      dn.incBlocksScheduled();
+-    }
+-    
+     // Allocate a new block and record it in the INode. 
+     synchronized (this) {
+       INodeFileUnderConstruction pendingFile  = checkLease(src, clientName);
+@@ -1160,7 +1128,11 @@
+ 
+       // allocate new block record block locations in INode.
+       newBlock = allocateBlock(src, pendingFile);
+-      pendingFile.setLastBlockLocations(targets);
++      pendingFile.setTargets(targets);
++      
++      for (DatanodeDescriptor dn : targets) {
++        dn.incBlocksScheduled();
++      }      
+     }
+         
+     // Create next block
+@@ -1176,11 +1148,11 @@
+     // Remove the block from the pending creates list
+     //
+     NameNode.stateChangeLog.debug("BLOCK* NameSystem.abandonBlock: "
+-                                  +b.getBlockName()+"of file "+src);
++                                  +b+"of file "+src);
+     INodeFileUnderConstruction file = checkLease(src, holder);
+     dir.removeBlock(src, file, b);
+     NameNode.stateChangeLog.debug("BLOCK* NameSystem.abandonBlock: "
+-                                    + b.getBlockName()
++                                    + b
+                                     + " is removed from pendingCreates");
+     return true;
+   }
+@@ -1190,7 +1162,7 @@
+       ) throws IOException {
+     INode file = dir.getFileINode(src);
+     if (file == null) {
+-      Lease lease = getLease(holder);
++      Lease lease = leaseManager.getLease(new StringBytesWritable(holder));
+       throw new LeaseExpiredException("No lease on " + src +
+                                       " File does not exist. " +
+                                       (lease != null ? lease.toString() :
+@@ -1198,7 +1170,7 @@
+                                        " does not have any open files."));
+     }
+     if (!file.isUnderConstruction()) {
+-      Lease lease = getLease(holder);
++      Lease lease = leaseManager.getLease(new StringBytesWritable(holder));
+       throw new LeaseExpiredException("No lease on " + src + 
+                                       " File is not open for writing. " +
+                                       (lease != null ? lease.toString() :
+@@ -1214,32 +1186,6 @@
+   }
+ 
+   /**
+-   * Abandon the entire file in progress
+-   */
+-  public synchronized void abandonFileInProgress(String src, 
+-                                                 String holder
+-                                                 ) throws IOException {
+-    NameNode.stateChangeLog.debug("DIR* NameSystem.abandonFileInProgress:" + src);
+-    synchronized (sortedLeases) {
+-      // find the lease
+-      Lease lease = getLease(holder);
+-      if (lease != null) {
+-        // remove the file from the lease
+-        if (lease.completedCreate(src)) {
+-          // if we found the file in the lease, remove it from pendingCreates
+-          internalReleaseCreate(src, holder);
+-        } else {
+-          LOG.info("Attempt by " + holder + 
+-                   " to release someone else's create lock on " + src);
+-        }
+-      } else {
+-        LOG.info("Attempt to release a lock from an unknown lease holder "
+-                 + holder + " for " + src);
+-      }
+-    }
+-  }
+-
+-  /**
+    * The FSNamesystem will already know the blocks that make up the file.
+    * Before we return, we make sure that all the file's blocks have 
+    * been reported by datanodes and are replicated correctly.
+@@ -1275,30 +1221,13 @@
+     } else if (!checkFileProgress(pendingFile, true)) {
+       return STILL_WAITING;
+     }
+-        
+-    // The file is no longer pending.
+-    // Create permanent INode, update blockmap
+-    INodeFile newFile = pendingFile.convertToInodeFile();
+-    dir.replaceNode(src, pendingFile, newFile);
+ 
+-    // close file and persist block allocations for this file
+-    dir.closeFile(src, newFile);
++    finalizeINodeFileUnderConstruction(src, pendingFile);
+ 
+-    NameNode.stateChangeLog.debug("DIR* NameSystem.completeFile: " + src
++    if (NameNode.stateChangeLog.isDebugEnabled()) {
++      NameNode.stateChangeLog.debug("DIR* NameSystem.completeFile: " + src
+                                   + " blocklist persisted");
+-
+-    removeLease(src, holder);
+-
+-    //
+-    // REMIND - mjc - this should be done only after we wait a few secs.
+-    // The namenode isn't giving datanodes enough time to report the
+-    // replicated blocks that are automatically done as part of a client
+-    // write.
+-    //
+-
+-    // Now that the file is real, we need to be sure to replicate
+-    // the blocks.
+-    checkReplicationFactor(newFile);
++    }
+     return COMPLETE_SUCCESS;
+   }
+ 
+@@ -1330,11 +1259,12 @@
+   private Block allocateBlock(String src, INode file) throws IOException {
+     Block b = null;
+     do {
+-      b = new Block(FSNamesystem.randBlockId.nextLong(), 0);
++      b = new Block(FSNamesystem.randBlockId.nextLong(), 0, 
++                    getGenerationStamp());
+     } while (isValidBlock(b));
+     b = dir.addBlock(src, file, b);
+     NameNode.stateChangeLog.info("BLOCK* NameSystem.allocateBlock: "
+-                                 +src+ ". "+b.getBlockName());
++                                 +src+ ". "+b);
+     return b;
+   }
+ 
+@@ -1378,51 +1308,83 @@
+       recentInvalidateSets.put(n.getStorageID(), invalidateSet);
+     }
+     invalidateSet.add(b);
++    NameNode.stateChangeLog.info("BLOCK* NameSystem.delete: "
++        + b.getBlockName() + " is added to invalidSet of " + n.getName());
++  }
++
++  /**
++   * Adds block to list of blocks which will be invalidated on 
++   * all its datanodes.
++   */
++  private void addToInvalidates(Block b) {
++    for (Iterator<DatanodeDescriptor> it = 
++                                blocksMap.nodeIterator(b); it.hasNext();) {
++      DatanodeDescriptor node = it.next();
++      addToInvalidates(b, node);
++    }
+   }
+ 
+   /**
+    * dumps the contents of recentInvalidateSets
+    */
+   private synchronized void dumpRecentInvalidateSets(PrintWriter out) {
+-    Collection<Collection<Block>> values = recentInvalidateSets.values();
+-    Iterator<Map.Entry<String,Collection<Block>>> it = 
+-      recentInvalidateSets.entrySet().iterator();
+-    if (values.size() == 0) {
+-      out.println("Metasave: Blocks waiting deletion: 0");
++    int size = recentInvalidateSets.values().size();
++    out.println("Metasave: Blocks waiting deletion from "+size+" datanodes.");
++    if (size == 0) {
+       return;
+     }
+-    out.println("Metasave: Blocks waiting deletion from " +
+-                values.size() + " datanodes.");
+-    while (it.hasNext()) {
+-      Map.Entry<String,Collection<Block>> entry = it.next();
+-      String storageId = entry.getKey();
+-      DatanodeDescriptor node = datanodeMap.get(storageId);
+-      Collection<Block> blklist = entry.getValue();
+-      if (blklist.size() > 0) {
+-        out.print(node.getName());
+-        for (Iterator jt = blklist.iterator(); jt.hasNext();) {
+-          Block block = (Block) jt.next();
+-          out.print(" " + block); 
+-        }
+-        out.println("");
++    for(Map.Entry<String,Collection<Block>> entry : recentInvalidateSets.entrySet()) {
++      Collection<Block> blocks = entry.getValue();
++      if (blocks.size() > 0) {
++        out.println(datanodeMap.get(entry.getKey()).getName() + blocks);
+       }
+     }
+   }
+ 
+   /**
++   * Mark the block belonging to datanode as corrupt
++   * @param blk Block to be marked as corrupt
++   * @param datanode Datanode which holds the corrupt replica
++   */
++  public synchronized void markBlockAsCorrupt(Block blk, DatanodeInfo dn)
++    throws IOException {
++    DatanodeDescriptor node = getDatanode(dn);
++    if (node == null) {
++      throw new IOException("Cannot mark block" + blk.getBlockName() +
++                            " as corrupt because datanode " + dn.getName() +
++                            " does not exist. ");
++    }
++    // Check if the block is associated with an inode, if not 
++    // ignore the request for now. This could happen when BlockScanner
++    // thread of Datanode reports bad block before Block reports are sent
++    // by the Datanode on startup
++    if (blocksMap.getINode(blk) == null) 
++      NameNode.stateChangeLog.info("BLOCK NameSystem.markBlockAsCorrupt: " +
++                                   "block " + blk + " could not be marked " +
++                                   "as corrupt as it does not exists in " +
++                                   "blocksMap");
++    else {
++      // Add this replica to corruptReplicas Map and 
++      // add the block to neededReplication 
++      corruptReplicas.addToCorruptReplicasMap(blk, node);
++      updateNeededReplications(blk, 0, 1);
++    }
++  }
++
++  /**
+    * Invalidates the given block on the given datanode.
+    */
+   public synchronized void invalidateBlock(Block blk, DatanodeInfo dn)
+     throws IOException {
+     NameNode.stateChangeLog.info("DIR* NameSystem.invalidateBlock: " 
+-                                 + blk.getBlockName() + " on " 
++                                 + blk + " on " 
+                                  + dn.getName());
+     if (isInSafeMode()) {
+-      throw new SafeModeException("Cannot invalidate block " + blk.getBlockName(), safeMode);
++      throw new SafeModeException("Cannot invalidate block " + blk, safeMode);
+     }
+     DatanodeDescriptor node = getDatanode(dn);
+     if (node == null) {
+-      throw new IOException("Cannot invalidate block " + blk.getBlockName() +
++      throw new IOException("Cannot invalidate block " + blk +
+                             " because datanode " + dn.getName() +
+                             " does not exist.");
+     }
+@@ -1434,11 +1396,11 @@
+       addToInvalidates(blk, dn);
+       removeStoredBlock(blk, node);
+       NameNode.stateChangeLog.debug("BLOCK* NameSystem.invalidateBlocks: "
+-                                   + blk.getBlockName() + " on " 
++                                   + blk + " on " 
+                                    + dn.getName() + " listed for deletion.");
+     } else {
+       NameNode.stateChangeLog.info("BLOCK* NameSystem.invalidateBlocks: "
+-                                   + blk.getBlockName() + " on " 
++                                   + blk + " on " 
+                                    + dn.getName() + " is the only copy and was not deleted.");
+     }
+   }
+@@ -1458,6 +1420,12 @@
+   public boolean renameTo(String src, String dst) throws IOException {
+     boolean status = renameToInternal(src, dst);
+     getEditLog().logSync();
++    if (status && auditLog.isInfoEnabled()) {
++      final FileStatus stat = dir.getFileInfo(dst);
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "rename", src, dst, stat);
++    }
+     return status;
+   }
+ 
+@@ -1479,16 +1447,12 @@
+       checkAncestorAccess(actualdst, FsAction.WRITE);
+     }
+ 
+-    return dir.renameTo(src, dst);
+-  }
+-
+-  /**
+-   * Remove the indicated filename from the namespace.  This may
+-   * invalidate some blocks that make up the file.
+-   */
+-  @Deprecated
+-  public boolean delete(String src) throws IOException {
+-    return delete(src, true);
++    DFSFileInfo dinfo = dir.getFileInfo(dst);
++    if (dir.renameTo(src, dst)) {
++      changeLease(src, dst, dinfo);     // update lease with new filename
++      return true;
++    }
++    return false;
+   }
+ 
+   /**
+@@ -1501,6 +1465,11 @@
+       }
+       boolean status = deleteInternal(src, true, true);
+       getEditLog().logSync();
++      if (status && auditLog.isInfoEnabled()) {
++        logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                      Server.getRemoteIp(),
++                      "delete", src, null, null);
++      }
+       return status;
+     }
+     
+@@ -1518,41 +1487,25 @@
+    */
+   synchronized boolean deleteInternal(String src, 
+       boolean enforceSafeMode, boolean enforcePermission) throws IOException {
+-    NameNode.stateChangeLog.debug("DIR* NameSystem.delete: " + src);
++    if (NameNode.stateChangeLog.isDebugEnabled()) {
++      NameNode.stateChangeLog.debug("DIR* NameSystem.delete: " + src);
++    }
+     if (enforceSafeMode && isInSafeMode())
+       throw new SafeModeException("Cannot delete " + src, safeMode);
+     if (enforcePermission && isPermissionEnabled) {
+       checkPermission(src, false, null, FsAction.WRITE, null, FsAction.ALL);
+     }
+ 
+-    ArrayList<Block> deletedBlocks = new ArrayList<Block>();
+-    INode old = dir.delete(src, deletedBlocks);
+-    if (old == null) {
+-      return false;
+-    }
+-    for (Block b : deletedBlocks) {
+-      for (Iterator<DatanodeDescriptor> it = 
+-            blocksMap.nodeIterator(b); it.hasNext();) {
+-        DatanodeDescriptor node = it.next();
+-        addToInvalidates(b, node);
+-        NameNode.stateChangeLog.info("BLOCK* NameSystem.delete: "
+-                                      + b.getBlockName() + " is added to invalidSet of " 
+-                                      + node.getName());
+-      }
+-    }
+-    if (old.isUnderConstruction()) {
+-      INodeFileUnderConstruction cons = (INodeFileUnderConstruction) old;
+-      removeLease(src, cons.getClientName());
+-    }
+-    return true;
++    return dir.delete(src) != null;
+   }
+ 
+-  /** @deprecated Use getFileInfo(String) instead
+-   * Return whether the given filename exists
+-   */
+-  @Deprecated
+-  public boolean exists(String src) throws IOException {
+-      return getFileInfo(src) != null;
++  void removePathAndBlocks(String src, List<Block> blocks) throws IOException {
++    leaseManager.removeLeaseWithPrefixPath(src);
++    for(Block b : blocks) {
++      blocksMap.removeINode(b);
++      corruptReplicas.removeFromCorruptReplicasMap(b);
++      addToInvalidates(b);
++    }
+   }
+ 
+   /** Get the file info for a specific file.
+@@ -1599,6 +1552,12 @@
+       ) throws IOException {
+     boolean status = mkdirsInternal(src, permissions);
+     getEditLog().logSync();
++    if (status && auditLog.isInfoEnabled()) {
++      final FileStatus stat = dir.getFileInfo(src);
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "mkdirs", src, null, stat);
++    }
+     return status;
+   }
+     
+@@ -1643,6 +1602,36 @@
+     return dir.getContentSummary(src);
+   }
+ 
++  /**
++   * Set the quota for a directory.
++   * @param path The string representation of the path to the directory
++   * @param quota The limit of the number of names in or below the directory
++   * @throws IOException if the path is not a directory or the number of
++   * existing names in or below the directory is greater than the given quota
++   */
++  void setQuota(String path, long quota) throws IOException {
++    if (isPermissionEnabled) {
++      checkSuperuserPrivilege();
++    }
++    
++    dir.setQuota(path, quota);
++    getEditLog().logSync();
++  }
++  
++  /**
++   * Remove the quota for a directory
++   * @param path The string representation of the path to the directory
++   * @throws IOException if the path is not a directory
++   */
++  void clearQuota(String path) throws IOException {
++    if (isPermissionEnabled) {
++      checkSuperuserPrivilege();
++    }
++    
++    dir.clearQuota(path);
++    getEditLog().logSync();
++  }
++  
+   /** Persist all metadata about this file.
+    * @param src The string representation of the path
+    * @param clientName The string representation of the client
+@@ -1661,170 +1650,14 @@
+     }
+   }
+ 
+-  /************************************************************
+-   * A Lease governs all the locks held by a single client.
+-   * For each client there's a corresponding lease, whose
+-   * timestamp is updated when the client periodically
+-   * checks in.  If the client dies and allows its lease to
+-   * expire, all the corresponding locks can be released.
+-   *************************************************************/
+-  class Lease implements Comparable<Lease> {
+-    private StringBytesWritable holder;
+-    private long lastUpdate;
+-    private Collection<StringBytesWritable> locks = new TreeSet<StringBytesWritable>();
+-    private Collection<StringBytesWritable> creates = new TreeSet<StringBytesWritable>();
+-
+-    public Lease(String holder) throws IOException {
+-      this.holder = new StringBytesWritable(holder);
+-      renew();
+-    }
+-    public void renew() {
+-      this.lastUpdate = now();
+-    }
+-    /**
+-     * Returns true if the Hard Limit Timer has expired
+-     */
+-    public boolean expiredHardLimit() {
+-      if (now() - lastUpdate > hardLimit) {
+-        return true;
+-      }
+-      return false;
+-    }
+-    /**
+-     * Returns true if the Soft Limit Timer has expired
+-     */
+-    public boolean expiredSoftLimit() {
+-      if (now() - lastUpdate > softLimit) {
+-        return true;
+-      }
+-      return false;
+-    }
+-    public void obtained(String src) throws IOException {
+-      locks.add(new StringBytesWritable(src));
+-    }
+-    public void released(String src) throws IOException {
+-      locks.remove(new StringBytesWritable(src));
+-    }
+-    public void startedCreate(String src) throws IOException {
+-      creates.add(new StringBytesWritable(src));
+-    }
+-    public boolean completedCreate(String src) throws IOException {
+-      return creates.remove(new StringBytesWritable(src));
+-    }
+-    public boolean hasLocks() {
+-      return (locks.size() + creates.size()) > 0;
+-    }
+-    public void releaseLocks() throws IOException {
+-      String holderStr = holder.getString();
+-      locks.clear();
+-      for (Iterator<StringBytesWritable> it = creates.iterator(); it.hasNext();)
+-        internalReleaseCreate(it.next().getString(), holderStr);
+-      creates.clear();
+-    }
+-
+-    /**
+-     */
+-    public String toString() {
+-      return "[Lease.  Holder: " + holder.toString() + ", heldlocks: " +
+-        locks.size() + ", pendingcreates: " + creates.size() + "]";
+-    }
+-
+-    /**
+-     */
+-    public int compareTo(Lease o) {
+-      Lease l1 = this;
+-      Lease l2 = o;
+-      long lu1 = l1.lastUpdate;
+-      long lu2 = l2.lastUpdate;
+-      if (lu1 < lu2) {
+-        return -1;
+-      } else if (lu1 > lu2) {
+-        return 1;
+-      } else {
+-        return l1.holder.compareTo(l2.holder);
+-      }
+-    }
+-
+-    public boolean equals(Object o) {
+-      if (!(o instanceof Lease)) {
+-        return false;
+-      }
+-      Lease obj = (Lease) o;
+-      if (lastUpdate == obj.lastUpdate &&
+-          holder.equals(obj.holder)) {
+-        return true;
+-      }
+-      return false;
+-    }
+-
+-    public int hashCode() {
+-      return holder.hashCode();
+-    }
+-    
+-    String getHolder() throws IOException {
+-      return holder.getString();
+-    }
+-
+-    Collection<StringBytesWritable> getPaths() throws IOException {
+-      return creates;
+-    }
+-  }
+-  
+-  /******************************************************
+-   * LeaseMonitor checks for leases that have expired,
+-   * and disposes of them.
+-   ******************************************************/
+-  class LeaseMonitor implements Runnable {
+-    public void run() {
+-      try {
+-        while (fsRunning) {
+-          synchronized (FSNamesystem.this) {
+-            synchronized (sortedLeases) {
+-              Lease top;
+-              while ((sortedLeases.size() > 0) &&
+-                     ((top = sortedLeases.first()) != null)) {
+-                if (top.expiredHardLimit()) {
+-                  top.releaseLocks();
+-                  leases.remove(top.holder);
+-                  LOG.info("Removing lease " + top + ", leases remaining: " + sortedLeases.size());
+-                  if (!sortedLeases.remove(top)) {
+-                    LOG.info("Unknown failure trying to remove " + top + " from lease set.");
+-                  }
+-                } else {
+-                  break;
+-                }
+-              }
+-            }
+-          }
+-          try {
+-            Thread.sleep(2000);
+-          } catch (InterruptedException ie) {
+-          }
+-        }
+-      } catch (Exception e) {
+-        FSNamesystem.LOG.error(StringUtils.stringifyException(e));
+-      }
+-    }
+-  }
+-  
+-  private Lease getLease(String holder) throws IOException {
+-    return leases.get(new StringBytesWritable(holder));
+-  }
+-  
+-  private void putLease(String holder, Lease lease) throws IOException {
+-    leases.put(new StringBytesWritable(holder), lease);
+-  }
+-  
+-  private void removeLease(String holder) throws IOException {
+-    leases.remove(new StringBytesWritable(holder));
+-  }
+-
+   /**
+    * Move a file that is being written to be immutable.
+    * @param src The filename
+    * @param holder The datanode that was creating the file
+    */
+-  private void internalReleaseCreate(String src, String holder) throws IOException {
++  void internalReleaseLease(Lease lease, String src) throws IOException {
++    LOG.info("Recovering lease=" + lease + ", src=" + src);
++
+     INodeFile iFile = dir.getFileINode(src);
+     if (iFile == null) {
+       NameNode.stateChangeLog.warn("DIR* NameSystem.internalReleaseCreate: "
+@@ -1838,30 +1671,44 @@
+                                    + src + " but file is already closed.");
+       return;
+     }
++    if (NameNode.stateChangeLog.isDebugEnabled()) {
++      NameNode.stateChangeLog.debug("DIR* NameSystem.internalReleaseCreate: "
++          + src + " does not being written in " + lease);
++    }
++
+     INodeFileUnderConstruction pendingFile = (INodeFileUnderConstruction) iFile;
+ 
+-    // The last block that was allocated migth not have been used by the
+-    // client. In this case, the size of the last block would be 0. A fsck
+-    // will report this block as a missing block because no datanodes have it.
+-    // Delete this block.
+-    Block[] blocks = pendingFile.getBlocks();
+-    if (blocks != null && blocks.length > 0) {
+-      Block last = blocks[blocks.length - 1];
+-      if (last.getNumBytes() == 0) {
+-          pendingFile.removeBlock(last);
+-          blocksMap.removeINode(last);
+-          for (Iterator<DatanodeDescriptor> it = 
+-               blocksMap.nodeIterator(last); it.hasNext();) {
+-            DatanodeDescriptor node = it.next();
+-            addToInvalidates(last, node);
+-          }
+-          /* What else do we need to do?
+-           * removeStoredBlock()? we do different things when a block is 
+-           * removed in different contexts. Mostly these should be
+-           * same and/or should be in one place.
+-           */
++    // Initialize lease recovery for pendingFile. If there are no blocks 
++    // associated with this file, then reap lease immediately. Otherwise 
++    // renew the lease and trigger lease recovery.
++    if (pendingFile.getTargets() == null ||
++        pendingFile.getTargets().length == 0) {
++      if (pendingFile.getBlocks().length == 0) {
++        finalizeINodeFileUnderConstruction(src, pendingFile);
++        NameNode.stateChangeLog.warn("BLOCK*"
++          + " internalReleaseLease: No blocks found, lease removed.");
++        return;
+       }
+-    }
++      // setup the Inode.targets for the last block from the blocksMap
++      //
++      Block[] blocks = pendingFile.getBlocks();
++      Block last = blocks[blocks.length-1];
++      DatanodeDescriptor[] targets = 
++         new DatanodeDescriptor[blocksMap.numNodes(last)];
++      Iterator<DatanodeDescriptor> it = blocksMap.nodeIterator(last);
++      for (int i = 0; it != null && it.hasNext(); i++) {
++        targets[i] = it.next();
++      }
++      pendingFile.setTargets(targets);
++    }
++    // start lease recovery of the last block for this file.
++    pendingFile.assignPrimaryDatanode();
++    leaseManager.renewLease(lease);
++  }
++
++  private void finalizeINodeFileUnderConstruction(String src,
++      INodeFileUnderConstruction pendingFile) throws IOException {
++    leaseManager.removeLease(pendingFile.clientName, src);
+ 
+     // The file is no longer pending.
+     // Create permanent INode, update blockmap
+@@ -1871,28 +1718,84 @@
+     // close file and persist block allocations for this file
+     dir.closeFile(src, newFile);
+ 
+-    // replicate blocks of this file.
+     checkReplicationFactor(newFile);
+-  
+-    NameNode.stateChangeLog.info("DIR* NameSystem.internalReleaseCreate: " + 
+-                                 src + " is no longer written to by " + 
+-                                 holder);
+   }
+ 
++  synchronized void commitBlockSynchronization(Block lastblock,
++      long newgenerationstamp, long newlength,
++      boolean closeFile, boolean deleteblock, DatanodeID[] newtargets
++      ) throws IOException {
++    LOG.info("commitBlockSynchronization(lastblock=" + lastblock
++          + ", newgenerationstamp=" + newgenerationstamp
++          + ", newlength=" + newlength
++          + ", newtargets=" + Arrays.asList(newtargets) + ")");
++    final BlockInfo oldblockinfo = blocksMap.getStoredBlock(lastblock);
++    if (oldblockinfo == null) {
++      throw new IOException("Block (=" + lastblock + ") not found");
++    }
++    INodeFile iFile = oldblockinfo.getINode();
++    if (!iFile.isUnderConstruction()) {
++      throw new IOException("Unexpected block (=" + lastblock
++          + ") since the file (=" + iFile.getLocalName()
++          + ") is not under construction");
++    }
++    INodeFileUnderConstruction pendingFile = (INodeFileUnderConstruction)iFile;
++
++    // Remove old block from blocks map. This always have to be done
++    // because the generation stamp of this block is changing.
++    blocksMap.removeBlock(oldblockinfo);
++
++    if (deleteblock) {
++      pendingFile.removeBlock(lastblock);
++    }
++    else {
++      // update last block, construct newblockinfo and add it to the blocks map
++      lastblock.set(lastblock.blkid, newlength, newgenerationstamp);
++      final BlockInfo newblockinfo = blocksMap.addINode(lastblock, pendingFile);
++    
++      //update block info
++      DatanodeDescriptor[] descriptors = null;
++      if (newtargets.length > 0) {
++        descriptors = new DatanodeDescriptor[newtargets.length];
++        for(int i = 0; i < newtargets.length; i++) {
++          descriptors[i] = getDatanode(newtargets[i]);
++          descriptors[i].addBlock(newblockinfo);
++        }
++      }
++
++      pendingFile.setLastBlock(newblockinfo, descriptors);
++    }
++
++    // If this commit does not want to close the file, just persist
++    // block locations and return
++    String src = leaseManager.findPath(pendingFile);
++    if (!closeFile) {
++      dir.persistBlocks(src, pendingFile);
++      getEditLog().logSync();
++      LOG.info("commitBlockSynchronization(lastblock=" + lastblock
++          + ", newgenerationstamp=" + newgenerationstamp
++          + ", newlength=" + newlength
++          + ", newtargets=" + Arrays.asList(newtargets) + ") successful");
++      return;
++    }
++    
++    //remove lease, close file
++    finalizeINodeFileUnderConstruction(src, pendingFile);
++    getEditLog().logSync();
++    LOG.info("commitBlockSynchronization(newblock=" + lastblock
++          + ", newgenerationstamp=" + newgenerationstamp
++          + ", newlength=" + newlength
++          + ", newtargets=" + Arrays.asList(newtargets) + ") successful");
++  }
++
++
+   /**
+    * Renew the lease(s) held by the given client
+    */
+-  public void renewLease(String holder) throws IOException {
+-    synchronized (sortedLeases) {
+-      if (isInSafeMode())
+-        throw new SafeModeException("Cannot renew lease for " + holder, safeMode);
+-      Lease lease = getLease(holder);
+-      if (lease != null) {
+-        sortedLeases.remove(lease);
+-        lease.renew();
+-        sortedLeases.add(lease);
+-      }
+-    }
++  void renewLease(String holder) throws IOException {
++    if (isInSafeMode())
++      throw new SafeModeException("Cannot renew lease for " + holder, safeMode);
++    leaseManager.renewLease(holder);
+   }
+ 
+   /**
+@@ -1908,6 +1811,11 @@
+         checkTraverse(src);
+       }
+     }
++    if (auditLog.isInfoEnabled()) {
++      logAuditEvent(UserGroupInformation.getCurrentUGI(),
++                    Server.getRemoteIp(),
++                    "listStatus", src, null, null);
++    }
+     return dir.getListing(src);
+   }
+ 
+@@ -1925,29 +1833,34 @@
+     public void run() {
+       try {
+         while (fsRunning) {
+-          List <DatanodeDescriptor> datanodes = 
+-            new ArrayList<DatanodeDescriptor>(resolutionQueue.size());
+-          // Block if the queue is empty
+-          datanodes.add(resolutionQueue.take());
+-          resolutionQueue.drainTo(datanodes);
+-          List<String> dnHosts = new ArrayList<String>(datanodes.size());
+-          for (DatanodeDescriptor d : datanodes) {
+-            dnHosts.add(d.getName());
+-          }
+-          List<String> rName = dnsToSwitchMapping.resolve(dnHosts);
+-          if (rName == null) {
+-            LOG.error("The resolve call returned null! Using " + 
+-                NetworkTopology.DEFAULT_RACK + " for some hosts");
+-            rName = new ArrayList<String>(dnHosts.size());
+-            for (int i = 0; i < dnHosts.size(); i++) {
+-              rName.add(NetworkTopology.DEFAULT_RACK);
++          try {
++            List <DatanodeDescriptor> datanodes = 
++              new ArrayList<DatanodeDescriptor>(resolutionQueue.size());
++            // Block if the queue is empty
++            datanodes.add(resolutionQueue.take());
++            resolutionQueue.drainTo(datanodes);
++            List<String> dnHosts = new ArrayList<String>(datanodes.size());
++            for (DatanodeDescriptor d : datanodes) {
++              dnHosts.add(d.getName());
+             }
+-          }
+-          int i = 0;
+-          for (String m : rName) {
+-            DatanodeDescriptor d = datanodes.get(i++); 
+-            d.setNetworkLocation(m);
+-            clusterMap.add(d);
++            List<String> rName = dnsToSwitchMapping.resolve(dnHosts);
++            if (rName == null) {
++              LOG.error("The resolve call returned null! Using " + 
++                  NetworkTopology.DEFAULT_RACK + " for some hosts");
++              rName = new ArrayList<String>(dnHosts.size());
++              for (int i = 0; i < dnHosts.size(); i++) {
++                rName.add(NetworkTopology.DEFAULT_RACK);
++              }
++            }
++            int i = 0;
++            for (String m : rName) {
++              DatanodeDescriptor d = datanodes.get(i++); 
++              d.setNetworkLocation(m);
++              clusterMap.add(d);
++            }
++          } catch (InterruptedException e) {
++              FSNamesystem.LOG.debug("ResolutionMonitor thread received " +
++                                     "InterruptException. " + e);
+           }
+         }
+       } catch (Exception e) {
+@@ -2026,7 +1939,8 @@
+     // update the datanode's name with ip:port
+     DatanodeID dnReg = new DatanodeID(dnAddress + ":" + nodeReg.getPort(),
+                                       nodeReg.getStorageID(),
+-                                      nodeReg.getInfoPort());
++                                      nodeReg.getInfoPort(),
++                                      nodeReg.getIpcPort());
+     nodeReg.updateRegInfo(dnReg);
+       
+     NameNode.stateChangeLog.info(
+@@ -2119,7 +2033,7 @@
+   /**
+    * Get registrationID for datanodes based on the namespaceID.
+    * 
+-   * @see #registerDatanode(DatanodeRegistration,String)
++   * @see #registerDatanode(DatanodeRegistration)
+    * @see FSImage#newNamespaceID()
+    * @return registration ID
+    */
+@@ -2162,55 +2076,67 @@
+    * If a substantial amount of time passed since the last datanode 
+    * heartbeat then request an immediate block report.  
+    * 
+-   * @return true if registration is required or false otherwise.
++   * @return a datanode command 
+    * @throws IOException
+    */
+-  public boolean gotHeartbeat(DatanodeID nodeID,
+-                              long capacity,
+-                              long dfsUsed,
+-                              long remaining,
+-                              int xceiverCount,
+-                              int xmitsInProgress,
+-                              Object[] xferResults,
+-                              Object deleteList[]
+-                              ) throws IOException {
++  DatanodeCommand handleHeartbeat(DatanodeRegistration nodeReg,
++      long capacity, long dfsUsed, long remaining,
++      int xceiverCount, int xmitsInProgress) throws IOException {
++    DatanodeCommand cmd = null;
+     synchronized (heartbeats) {
+       synchronized (datanodeMap) {
+-        DatanodeDescriptor nodeinfo;
++        DatanodeDescriptor nodeinfo = null;
+         try {
+-          nodeinfo = getDatanode(nodeID);
+-          if (nodeinfo == null) {
+-            return true;
+-          }
++          nodeinfo = getDatanode(nodeReg);
+         } catch(UnregisteredDatanodeException e) {
+-          return true;
++          return DatanodeCommand.REGISTER;
+         }
+           
+         // Check if this datanode should actually be shutdown instead. 
+-        if (shouldNodeShutdown(nodeinfo)) {
++        if (nodeinfo != null && shouldNodeShutdown(nodeinfo)) {
+           setDatanodeDead(nodeinfo);
+           throw new DisallowedDatanodeException(nodeinfo);
+         }
+ 
+-        if (!nodeinfo.isAlive) {
+-          return true;
+-        } else {
+-          updateStats(nodeinfo, false);
+-          nodeinfo.updateHeartbeat(capacity, dfsUsed, remaining, xceiverCount);
+-          updateStats(nodeinfo, true);
+-          //
+-          // Extract pending replication work or block invalidation
+-          // work from the datanode descriptor
+-          //
+-          nodeinfo.getReplicationSets(this.maxReplicationStreams - 
+-                                      xmitsInProgress, xferResults); 
+-          if (xferResults[0] == null) {
+-            nodeinfo.getInvalidateBlocks(blockInvalidateLimit, deleteList);
+-          }
+-          return false;
++        if (nodeinfo == null || !nodeinfo.isAlive) {
++          return DatanodeCommand.REGISTER;
++        }
++
++        updateStats(nodeinfo, false);
++        nodeinfo.updateHeartbeat(capacity, dfsUsed, remaining, xceiverCount);
++        updateStats(nodeinfo, true);
++        
++        //check lease recovery
++        if (cmd == null) {
++          cmd = nodeinfo.getLeaseRecoveryCommand(Integer.MAX_VALUE);
++        }
++        //check pending replication
++        if (cmd == null) {
++          cmd = nodeinfo.getReplicationCommand(
++              maxReplicationStreams - xmitsInProgress);
+         }
++        //check block invalidation
++        if (cmd == null) {
++          cmd = nodeinfo.getInvalidateBlocks(blockInvalidateLimit);
++        }
++      }
++    }
++
++    // If the datanode has (just) been resolved and we haven't ever processed 
++    // a block report from it yet, ask for one now.
++    if (!blockReportProcessed(nodeReg)) {
++      // If we never processed a block report from this datanode, we shouldn't
++      // have any work for that as well
++      assert(cmd == null);
++      if (isResolved(nodeReg)) {
++        return DatanodeCommand.BLOCKREPORT;
+       }
+     }
++    //check distributed upgrade
++    if (cmd == null) {
++      cmd = getDistributedUpgradeCommand();
++    }
++    return cmd;
+   }
+ 
+   private void updateStats(DatanodeDescriptor node, boolean isAdded) {
+@@ -2219,14 +2145,14 @@
+     //
+     assert(Thread.holdsLock(heartbeats));
+     if (isAdded) {
+-      totalCapacity += node.getCapacity();
+-      totalUsed += node.getDfsUsed();
+-      totalRemaining += node.getRemaining();
++      capacityTotal += node.getCapacity();
++      capacityUsed += node.getDfsUsed();
++      capacityRemaining += node.getRemaining();
+       totalLoad += node.getXceiverCount();
+     } else {
+-      totalCapacity -= node.getCapacity();
+-      totalUsed -= node.getDfsUsed();
+-      totalRemaining -= node.getRemaining();
++      capacityTotal -= node.getCapacity();
++      capacityUsed -= node.getDfsUsed();
++      capacityRemaining -= node.getRemaining();
+       totalLoad -= node.getXceiverCount();
+     }
+   }
+@@ -2304,6 +2230,12 @@
+     }
+ 
+     workFound = computeReplicationWork(blocksToProcess); 
++    
++    // Update FSNamesystemMetrics counters
++    pendingReplicationBlocksCount = pendingReplications.size();
++    underReplicatedBlocksCount = neededReplications.size();
++    scheduledReplicationBlocksCount = workFound;
++    
+     if(workFound == 0)
+       workFound = computeInvalidateWork(nodesToProcess);
+     return workFound;
+@@ -2387,7 +2319,7 @@
+           neededReplicationsIterator.remove(); // remove from neededReplications
+           replIndex--;
+           NameNode.stateChangeLog.info("BLOCK* "
+-              + "Removing block " + block.getBlockName()
++              + "Removing block " + block
+               + " from neededReplications as it does not belong to any file.");
+           continue;
+         }
+@@ -2418,7 +2350,7 @@
+           replIndex--;
+           pendingReplications.add(block, targets.length);
+           NameNode.stateChangeLog.debug(
+-              "BLOCK* block " + block.getBlockName()
++              "BLOCK* block " + block
+               + " is moved from neededReplications to pendingReplications");
+         }
+         if (NameNode.stateChangeLog.isInfoEnabled()) {
+@@ -2430,7 +2362,7 @@
+           NameNode.stateChangeLog.info(
+                     "BLOCK* ask "
+                     + srcNode.getName() + " to replicate "
+-                    + block.getBlockName() + " to " + targetList);
++                    + block + " to " + targetList);
+           NameNode.stateChangeLog.debug(
+                     "BLOCK* neededReplications = " + neededReplications.size()
+                     + " pendingReplications = " + pendingReplications.size());
+@@ -2461,14 +2393,22 @@
+     DatanodeDescriptor srcNode = null;
+     int live = 0;
+     int decommissioned = 0;
++    int corrupt = 0;
+     Iterator<DatanodeDescriptor> it = blocksMap.nodeIterator(block);
+     while(it.hasNext()) {
+       DatanodeDescriptor node = it.next();
+-      if(!node.isDecommissionInProgress() && !node.isDecommissioned())
++      Collection<DatanodeDescriptor> nodes = corruptReplicas.getNodes(block);
++      if ((nodes != null) && (nodes.contains(node)))
++        corrupt++;
++      else if(!node.isDecommissionInProgress() && !node.isDecommissioned())
+         live++;
+       else
+         decommissioned++;
+       containingNodes.add(node);
++      // Check if this replica is corrupt
++      // If so, do not select the node as src node
++      if ((nodes != null) && nodes.contains(node))
++        continue;
+       if(node.getNumberOfBlocksToBeReplicated() >= maxReplicationStreams)
+         continue; // already reached replication limit
+       // the block must not be scheduled for removal on srcNode
+@@ -2493,7 +2433,7 @@
+         srcNode = node;
+     }
+     if(numReplicas != null)
+-      numReplicas.initialize(live, decommissioned);
++      numReplicas.initialize(live, decommissioned, corrupt);
+     return srcNode;
+   }
+ 
+@@ -2540,7 +2480,7 @@
+       StringBuffer blockList = new StringBuffer();
+       for(Block blk : blocksToInvalidate) {
+         blockList.append(' ');
+-        blockList.append(blk.getBlockName());
++        blockList.append(blk);
+       }
+       NameNode.stateChangeLog.info("BLOCK* ask "
+           + dn.getName() + " to delete " + blockList);
+@@ -2568,6 +2508,9 @@
+                                  getReplication(timedOutItems[i]));
+         }
+       }
++      /* If we know the the target datanodes where the replication timedout,
++       * we could invoke decBlocksScheduled() on it. Its ok for now.
++       */
+     }
+   }
+ 
+@@ -2763,14 +2706,25 @@
+   synchronized Block addStoredBlock(Block block, 
+                                     DatanodeDescriptor node,
+                                     DatanodeDescriptor delNodeHint) {
+-        
+-    INodeFile fileINode = blocksMap.getINode(block);
+-    int replication = (fileINode != null) ?  fileINode.getReplication() : 
+-      defaultReplication;
+-    boolean added = blocksMap.addNode(block, node, replication);
+-        
+-    Block storedBlock = blocksMap.getStoredBlock(block); //extra look up!
+-    if (storedBlock != null && block != storedBlock) {
++    BlockInfo storedBlock = blocksMap.getStoredBlock(block);
++    if(storedBlock == null || storedBlock.getINode() == null) {
++      // If this block does not belong to anyfile, then we are done.
++      NameNode.stateChangeLog.info("BLOCK* NameSystem.addStoredBlock: "
++                                   + "addStoredBlock request received for " 
++                                   + block + " on " + node.getName()
++                                   + " size " + block.getNumBytes()
++                                   + " But it does not belong to any file.");
++      // we could add this block to invalidate set of this datanode. 
++      // it will happen in next block report otherwise.
++      return block;      
++    }
++     
++    // add block to the data-node
++    boolean added = node.addBlock(storedBlock);
++    
++    assert storedBlock != null : "Block must be stored by now";
++
++    if (block != storedBlock) {
+       if (block.getNumBytes() > 0) {
+         long cursize = storedBlock.getNumBytes();
+         if (cursize == 0) {
+@@ -2823,6 +2777,7 @@
+       }
+       block = storedBlock;
+     }
++    assert storedBlock == block : "Block must be stored by now";
+         
+     int curReplicaDelta = 0;
+         
+@@ -2835,29 +2790,19 @@
+       //
+       if (!isInSafeMode()) {
+         NameNode.stateChangeLog.info("BLOCK* NameSystem.addStoredBlock: "
+-                                      +"blockMap updated: "+node.getName()+" is added to "+block.getBlockName()+" size "+block.getNumBytes());
++                                      +"blockMap updated: "+node.getName()+" is added to "+block+" size "+block.getNumBytes());
+       }
+     } else {
+       NameNode.stateChangeLog.warn("BLOCK* NameSystem.addStoredBlock: "
+                                    + "Redundant addStoredBlock request received for " 
+-                                   + block.getBlockName() + " on " + node.getName()
++                                   + block + " on " + node.getName()
+                                    + " size " + block.getNumBytes());
+     }
+-    //
+-    // If this block does not belong to anyfile, then we are done.
+-    //
+-    if (fileINode == null) {
+-      NameNode.stateChangeLog.info("BLOCK* NameSystem.addStoredBlock: "
+-                                   + "addStoredBlock request received for " 
+-                                   + block.getBlockName() + " on " + node.getName()
+-                                   + " size " + block.getNumBytes()
+-                                   + " But it does not belong to any file.");
+-      return block;
+-    }
+ 
+     // filter out containingNodes that are marked for decommission.
+-    NumberReplicas num = countNodes(block);
+-    int numCurrentReplica = num.liveReplicas()
++    NumberReplicas num = countNodes(storedBlock);
++    int numLiveReplicas = num.liveReplicas();
++    int numCurrentReplica = numLiveReplicas
+       + pendingReplications.getNumReplicas(block);
+ 
+     // check whether safe replication is reached for the block
+@@ -2867,10 +2812,16 @@
+     // if file is being actively written to, then do not check 
+     // replication-factor here. It will be checked when the file is closed.
+     //
++    INodeFile fileINode = null;
++    fileINode = storedBlock.getINode();
+     if (fileINode.isUnderConstruction()) {
+       return block;
+     }
+-        
++
++    // do not handle mis-replicated blocks during startup
++    if(isInSafeMode())
++      return block;
++
+     // handle underReplication/overReplication
+     short fileReplication = fileINode.getReplication();
+     if (numCurrentReplica >= fileReplication) {
+@@ -2882,9 +2833,88 @@
+     if (numCurrentReplica > fileReplication) {
+       proccessOverReplicatedBlock(block, fileReplication, node, delNodeHint);
+     }
++    // If the file replication has reached desired value
++    // we can remove any corrupt replicas the block may have
++    int corruptReplicasCount = num.corruptReplicas();
++    if ((corruptReplicasCount > 0) && (numLiveReplicas == fileReplication)) 
++      invalidateCorruptReplicas(block);
+     return block;
+   }
+-    
++
++  /**
++   * Invalidate corrupt replicas.
++   * <p>
++   * This will remove the replicas from the block's location list,
++   * add them to {@link #recentInvalidateSets} so that they could be further
++   * deleted from the respective data-nodes,
++   * and remove the block from corruptReplicasMap.
++   * <p>
++   * This method should be called when the block has sufficient
++   * number of live replicas.
++   *
++   * @param blk Block whose corrupt replicas need to be invalidated
++   */
++  void invalidateCorruptReplicas(Block blk) {
++    Collection<DatanodeDescriptor> nodes = corruptReplicas.getNodes(blk);
++    boolean gotException = false;
++    if (nodes == null)
++      return;
++    for (Iterator<DatanodeDescriptor> it = nodes.iterator(); it.hasNext(); ) {
++      DatanodeDescriptor node = it.next();
++      try {
++        invalidateBlock(blk, node);
++      } catch (IOException e) {
++        NameNode.stateChangeLog.info("NameNode.invalidateCorruptReplicas " +
++                                      "error in deleting bad block " + blk +
++                                      " on " + node + e);
++        gotException = true;
++      }
++    }
++    // Remove the block from corruptReplicasMap
++    if (!gotException)
++      corruptReplicas.removeFromCorruptReplicasMap(blk);
++  }
++
++  /**
++   * For each block in the name-node verify whether it belongs to any file,
++   * over or under replicated. Place it into the respective queue.
++   */
++  private synchronized void processMisReplicatedBlocks() {
++    long nrInvalid = 0, nrOverReplicated = 0, nrUnderReplicated = 0;
++    neededReplications.clear();
++    excessReplicateMap.clear();
++    for(BlocksMap.BlockInfo block : blocksMap.getBlocks()) {
++      INodeFile fileINode = block.getINode();
++      if(fileINode == null) {
++        // block does not belong to any file
++        nrInvalid++;
++        addToInvalidates(block);
++        continue;
++      }
++      // calculate current replication
++      short expectedReplication = fileINode.getReplication();
++      NumberReplicas num = countNodes(block);
++      int numCurrentReplica = num.liveReplicas();
++      // add to under-replicated queue if need to be
++      if (neededReplications.add(block, 
++                                 numCurrentReplica,
++                                 num.decommissionedReplicas(),
++                                 expectedReplication)) {
++        nrUnderReplicated++;
++      }
++
++      if (numCurrentReplica > expectedReplication) {
++        // over-replicated block
++        nrOverReplicated++;
++        proccessOverReplicatedBlock(block, expectedReplication, null, null);
++      }
++    }
++    LOG.info("Total number of blocks = " + blocksMap.size());
++    LOG.info("Number of invalid blocks = " + nrInvalid);
++    LOG.info("Number of under-replicated blocks = " + nrUnderReplicated);
++    LOG.info("Number of  over-replicated blocks = " + nrOverReplicated);
++  }
++
+   /**
+    * Find how many of the containing nodes are "extra", if any.
+    * If there are any extras, call chooseExcessReplicates() to
+@@ -3011,7 +3041,7 @@
+       }
+       excessBlocks.add(b);
+       NameNode.stateChangeLog.debug("BLOCK* NameSystem.chooseExcessReplicates: "
+-                                    +"("+cur.getName()+", "+b.getBlockName()+") is added to excessReplicateMap");
++                                    +"("+cur.getName()+", "+b+") is added to excessReplicateMap");
+ 
+       //
+       // The 'excessblocks' tracks blocks until we get confirmation
+@@ -3029,7 +3059,7 @@
+       }
+       invalidateSet.add(b);
+       NameNode.stateChangeLog.debug("BLOCK* NameSystem.chooseExcessReplicates: "
+-                                    +"("+cur.getName()+", "+b.getBlockName()+") is added to recentInvalidateSets");
++                                    +"("+cur.getName()+", "+b+") is added to recentInvalidateSets");
+     }
+   }
+ 
+@@ -3039,10 +3069,10 @@
+    */
+   synchronized void removeStoredBlock(Block block, DatanodeDescriptor node) {
+     NameNode.stateChangeLog.debug("BLOCK* NameSystem.removeStoredBlock: "
+-                                  +block.getBlockName() + " from "+node.getName());
++                                  +block + " from "+node.getName());
+     if (!blocksMap.removeNode(block, node)) {
+       NameNode.stateChangeLog.debug("BLOCK* NameSystem.removeStoredBlock: "
+-                                    +block.getBlockName()+" has already been removed from node "+node);
++                                    +block+" has already been removed from node "+node);
+       return;
+     }
+         
+@@ -3066,11 +3096,14 @@
+     if (excessBlocks != null) {
+       excessBlocks.remove(block);
+       NameNode.stateChangeLog.debug("BLOCK* NameSystem.removeStoredBlock: "
+-                                    +block.getBlockName()+" is removed from excessBlocks");
++                                    +block+" is removed from excessBlocks");
+       if (excessBlocks.size() == 0) {
+         excessReplicateMap.remove(node.getStorageID());
+       }
+     }
++    // If block is removed from blocksMap, remove it from corruptReplicas
++    if (fileINode == null)
++      corruptReplicas.removeFromCorruptReplicasMap(block);
+   }
+ 
+   /**
+@@ -3083,16 +3116,16 @@
+     DatanodeDescriptor node = getDatanode(nodeID);
+     if (node == null) {
+       NameNode.stateChangeLog.warn("BLOCK* NameSystem.blockReceived: "
+-                                   + block.getBlockName() + " is received from an unrecorded node " 
++                                   + block + " is received from an unrecorded node " 
+                                    + nodeID.getName());
+       throw new IllegalArgumentException(
+                                          "Unexpected exception.  Got blockReceived message from node " 
+-                                         + block.getBlockName() + ", but there is no info for it");
++                                         + block + ", but there is no info for it");
+     }
+         
+     if (NameNode.stateChangeLog.isDebugEnabled()) {
+       NameNode.stateChangeLog.debug("BLOCK* NameSystem.blockReceived: "
+-                                    +block.getBlockName()+" is received from " + nodeID.getName());
++                                    +block+" is received from " + nodeID.getName());
+     }
+ 
+     // Check if this datanode should actually be shutdown instead.
+@@ -3110,7 +3143,7 @@
+       delHintNode = datanodeMap.get(delHint);
+       if(delHintNode == null) {
+         NameNode.stateChangeLog.warn("BLOCK* NameSystem.blockReceived: "
+-            + block.getBlockName()
++            + block
+             + " is expected to be removed from an unrecorded node " 
+             + delHint);
+       }
+@@ -3136,7 +3169,7 @@
+    */
+   public long getCapacityTotal() {
+     synchronized (heartbeats) {
+-      return totalCapacity;
++      return this.capacityTotal;
+     }
+   }
+ 
+@@ -3145,7 +3178,7 @@
+    */
+   public long getCapacityUsed() {
+     synchronized(heartbeats){
+-      return totalUsed;
++      return this.capacityUsed;
+     }
+   }
+   /**
+@@ -3153,16 +3186,16 @@
+    */
+   public long getCapacityRemaining() {
+     synchronized (heartbeats) {
+-      return totalRemaining;
++      return this.capacityRemaining;
+     }
+   }
+ 
+   /**
+    * Total number of connections.
+    */
+-  public int totalLoad() {
++  public int getTotalLoad() {
+     synchronized (heartbeats) {
+-      return totalLoad;
++      return this.totalLoad;
+     }
+   }
+ 
+@@ -3215,7 +3248,7 @@
+     if (listDeadNodes) {
+       for (Iterator<String> it = mustList.keySet().iterator(); it.hasNext();) {
+         DatanodeDescriptor dn = 
+-            new DatanodeDescriptor(new DatanodeID(it.next(), "", 0));
++            new DatanodeDescriptor(new DatanodeID(it.next()));
+         dn.setLastUpdate(0);
+         nodes.add(dn);
+       }
+@@ -3326,18 +3359,20 @@
+   private static class NumberReplicas {
+     private int liveReplicas;
+     private int decommissionedReplicas;
++    private int corruptReplicas;
+ 
+     NumberReplicas() {
+-      initialize(0, 0);
++      initialize(0, 0, 0);
+     }
+ 
+-    NumberReplicas(int live, int decommissioned) {
+-      initialize(live, decommissioned);
++    NumberReplicas(int live, int decommissioned, int corrupt) {
++      initialize(live, decommissioned, corrupt);
+     }
+ 
+-    void initialize(int live, int decommissioned) {
++    void initialize(int live, int decommissioned, int corrupt) {
+       liveReplicas = live;
+       decommissionedReplicas = decommissioned;
++      corruptReplicas = corrupt;
+     }
+ 
+     int liveReplicas() {
+@@ -3346,32 +3381,41 @@
+     int decommissionedReplicas() {
+       return decommissionedReplicas;
+     }
++    int corruptReplicas() {
++      return corruptReplicas;
++    }
+   } 
+ 
+   /**
+    * Counts the number of nodes in the given list into active and
+    * decommissioned counters.
+    */
+-  private NumberReplicas countNodes(Iterator<DatanodeDescriptor> nodeIter) {
++  private NumberReplicas countNodes(Block b,
++                                    Iterator<DatanodeDescriptor> nodeIter) {
+     int count = 0;
+     int live = 0;
++    int corrupt = 0;
++    Collection<DatanodeDescriptor> nodesCorrupt = corruptReplicas.getNodes(b);
+     while ( nodeIter.hasNext() ) {
+       DatanodeDescriptor node = nodeIter.next();
+-      if (node.isDecommissionInProgress() || node.isDecommissioned()) {
++      if ((nodesCorrupt != null) && (nodesCorrupt.contains(node))) {
++        corrupt++;
++      }
++      else if (node.isDecommissionInProgress() || node.isDecommissioned()) {
+         count++;
+       }
+       else {
+         live++;
+       }
+     }
+-    return new NumberReplicas(live, count);
++    return new NumberReplicas(live, count, corrupt);
+   }
+ 
+   /**
+    * Return the number of nodes that are live and decommissioned.
+    */
+   private NumberReplicas countNodes(Block b) {
+-    return countNodes(blocksMap.nodeIterator(b));
++    return countNodes(b, blocksMap.nodeIterator(b));
+   }
+ 
+   /**
+@@ -3634,8 +3678,8 @@
+    * of blocks in the system, which is the size of
+    * {@link FSNamesystem#blocksMap}. When the ratio reaches the
+    * {@link #threshold} it starts the {@link SafeModeMonitor} daemon in order
+-   * to monitor whether the safe mode extension is passed. Then it leaves safe
+-   * mode and destroys itself.
++   * to monitor whether the safe mode {@link #extension} is passed.
++   * Then it leaves safe mode and destroys itself.
+    * <p>
+    * If safe mode is turned on manually then the number of safe blocks is
+    * not tracked because the name node is not intended to leave safe mode
+@@ -3724,9 +3768,12 @@
+       
+     /**
+      * Leave safe mode.
+-     * Switch to manual safe mode if distributed upgrade is required.
++     * <p>
++     * Switch to manual safe mode if distributed upgrade is required.<br>
++     * Check for invalid, under- & over-replicated blocks in the end of startup.
+      */
+-    synchronized void leave(boolean checkForUpgrades) {
++    synchronized void leave(boolean checkForUpgrades,
++                            boolean checkBlockReplication) {
+       if(checkForUpgrades) {
+         // verify whether a distributed upgrade needs to be started
+         boolean needUpgrade = false;
+@@ -3741,6 +3788,9 @@
+           return;
+         }
+       }
++      if(checkBlockReplication)
++        // verify blocks replications
++        processMisReplicatedBlocks();
+       long timeInSafemode = now() - systemStart;
+       NameNode.stateChangeLog.info("STATE* Leaving safe mode after " 
+                                     + timeInSafemode/1000 + " secs.");
+@@ -3802,7 +3852,7 @@
+       // the threshold is reached
+       if (!isOn() ||                           // safe mode is off
+           extension <= 0 || threshold <= 0) {  // don't need to wait
+-        this.leave(true); // leave safe mode
++        this.leave(true, false); // leave safe mode
+         return;
+       }
+       if (reached > 0) {  // threshold has already been reached before
+@@ -3932,14 +3982,15 @@
+     /**
+      */
+     public void run() {
+-      while (fsRunning && !safeMode.canLeave()) {
++      while (fsRunning && (safeMode != null && !safeMode.canLeave())) {
+         try {
+           Thread.sleep(recheckInterval);
+         } catch (InterruptedException ie) {
+         }
+       }
+-      // leave safe mode an stop the monitor
+-      safeMode.leave(true);
++      // leave safe mode and stop the monitor
++      if(safeMode != null)
++        safeMode.leave(true, true);
+       smmthread = null;
+     }
+   }
+@@ -3957,7 +4008,7 @@
+       checkSuperuserPrivilege();
+       switch(action) {
+       case SAFEMODE_LEAVE: // leave safe mode
+-        leaveSafeMode(false);
++        leaveSafeMode(false, false);
+         break;
+       case SAFEMODE_ENTER: // enter safe mode
+         enterSafeMode();
+@@ -4028,7 +4079,9 @@
+    * Leave safe mode.
+    * @throws IOException
+    */
+-  synchronized void leaveSafeMode(boolean checkForUpgrades) throws IOException {
++  synchronized void leaveSafeMode(boolean checkForUpgrades,
++                                  boolean checkBlockReplication
++                                 ) throws IOException {
+     if (!isInSafeMode()) {
+       NameNode.stateChangeLog.info("STATE* Safe mode is already OFF."); 
+       return;
+@@ -4036,7 +4089,7 @@
+     if(getDistributedUpgradeState())
+       throw new SafeModeException("Distributed upgrade is in progress",
+                                   safeMode);
+-    safeMode.leave(checkForUpgrades);
++    safeMode.leave(checkForUpgrades, checkBlockReplication);
+   }
+     
+   String getSafeModeTip() {
+@@ -4049,61 +4102,22 @@
+     return getEditLog().getEditLogSize();
+   }
+ 
+-  synchronized long rollEditLog() throws IOException {
++  synchronized CheckpointSignature rollEditLog() throws IOException {
+     if (isInSafeMode()) {
+       throw new SafeModeException("Checkpoint not created",
+                                   safeMode);
+     }
+     LOG.info("Roll Edit Log from " + Server.getRemoteAddress());
+-    getEditLog().rollEditLog();
+-    ckptState = CheckpointStates.ROLLED_EDITS;
+-    return getEditLog().getFsEditTime();
++    return getFSImage().rollEditLog();
+   }
+ 
+   synchronized void rollFSImage() throws IOException {
+-    LOG.info("Roll FSImage from " + Server.getRemoteAddress());
+     if (isInSafeMode()) {
+       throw new SafeModeException("Checkpoint not created",
+                                   safeMode);
+     }
+-    if (ckptState != CheckpointStates.UPLOAD_DONE) {
+-      throw new IOException("Cannot roll fsImage before rolling edits log.");
+-    }
+-    dir.fsImage.rollFSImage();
+-    ckptState = CheckpointStates.START;
+-  }
+-
+-  File getFsEditName() throws IOException {
+-    return getEditLog().getFsEditName();
+-  }
+-
+-  /**
+-   * This is called just before a new checkpoint is uploaded to the
+-   * namenode.
+-   */
+-  synchronized void validateCheckpointUpload(long token) throws IOException {
+-    if (ckptState != CheckpointStates.ROLLED_EDITS) {
+-      throw new IOException("Namenode is not expecting an new image " +
+-                             ckptState);
+-    } 
+-    // verify token
+-    long modtime = getEditLog().getFsEditTime();
+-    if (token != modtime) {
+-      throw new IOException("Namenode has an edit log with timestamp of " +
+-                            DATE_FORM.format(new Date(modtime)) +
+-                            " but new checkpoint was created using editlog " +
+-                            " with timestamp " + 
+-                            DATE_FORM.format(new Date(token)) + 
+-                            ". Checkpoint Aborted.");
+-    }
+-    ckptState = CheckpointStates.UPLOAD_START;
+-  }
+-
+-  /**
+-   * This is called when a checkpoint upload finishes successfully.
+-   */
+-  synchronized void checkpointUploadDone() {
+-    ckptState = CheckpointStates.UPLOAD_DONE;
++    LOG.info("Roll FSImage from " + Server.getRemoteAddress());
++    getFSImage().rollFSImage();
+   }
+ 
+   /**
+@@ -4220,19 +4234,22 @@
+     return maxFsObjects;
+   }
+ 
+-  /**
+-   * Used by unit tests to change lease periods
+-   */
+-  void setLeasePeriod(long softLimit, long hardLimit) {
+-    this.softLimit = softLimit;
+-    this.hardLimit = hardLimit; 
+-    this.lmthread.interrupt();
+-  }
+-
+   public long getFilesTotal() {
+     return this.dir.totalInodes();
+   }
+ 
++  public long getPendingReplicationBlocks() {
++    return pendingReplicationBlocksCount;
++  }
++
++  public long getUnderReplicatedBlocks() {
++    return underReplicatedBlocksCount;
++  }
++
++  public long getScheduledReplicationBlocks() {
++    return scheduledReplicationBlocksCount;
++  }
++
+   public String getFSState() {
+     return isInSafeMode() ? "safeMode" : "Operational";
+   }
+@@ -4241,12 +4258,13 @@
+   /**
+    * Register the FSNamesystem MBean
+    */
+-  void registerMBean() {
++  void registerMBean(Configuration conf) {
+     // We wrap to bypass standard mbean naming convetion.
+     // This wraping can be removed in java 6 as it is more flexible in 
+     // package naming for mbeans and their impl.
+     StandardMBean bean;
+     try {
++      myFSMetrics = new FSNamesystemMetrics(conf);
+       bean = new StandardMBean(this,FSNamesystemMBean.class);
+       mbeanName = MBeanUtil.registerMBean("NameNode", "FSNamesystemStatus", bean);
+     } catch (NotCompliantMBeanException e) {
+@@ -4255,7 +4273,14 @@
+ 
+     LOG.info("Registered FSNamesystemStatusMBean");
+   }
+-  
++
++  /**
++   * get FSNamesystemMetrics
++   */
++  public FSNamesystemMetrics getFSNamesystemMetrics() {
++    return myFSMetrics;
++  }
++
+   /**
+    * shutdown FSNamesystem
+    */
+@@ -4267,7 +4292,7 @@
+ 
+   /**
+    * Number of live data nodes
+-   * @returns Number of live data nodes
++   * @return Number of live data nodes
+    */
+   public int numLiveDataNodes() {
+     int numLive = 0;
+@@ -4286,7 +4311,7 @@
+ 
+   /**
+    * Number of dead data nodes
+-   * @returns Number of dead data nodes
++   * @return Number of dead data nodes
+    */
+   public int numDeadDataNodes() {
+     int numDead = 0;
+@@ -4317,54 +4342,84 @@
+   }
+ 
+   /**
+-   * deletes the lease for the specified file
++   * Increments, logs and then returns the stamp
+    */
+-  void removeLease(String src, String holder) throws IOException {
+-    synchronized (sortedLeases) {
+-      Lease lease = getLease(holder);
+-      if (lease != null) {
+-        lease.completedCreate(src);
+-        if (!lease.hasLocks()) {
+-          removeLease(holder);
+-          sortedLeases.remove(lease);
+-        }
+-      }
+-    }
++  long nextGenerationStamp() {
++    long gs = generationStamp.nextStamp();
++    getEditLog().logGenerationStamp(gs);
++    return gs;
+   }
+ 
+   /**
+-   * Adds (or re-adds) the lease for the specified file.
++   * Verifies that the block is associated with a file that has a lease.
++   * Increments, logs and then returns the stamp
+    */
+-  void addLease(String src, String holder) throws IOException {
+-    synchronized (sortedLeases) {
+-      Lease lease = getLease(holder);
+-      if (lease == null) {
+-        lease = new Lease(holder);
+-        putLease(holder, lease);
+-        sortedLeases.add(lease);
+-      } else {
+-        sortedLeases.remove(lease);
+-        lease.renew();
+-        sortedLeases.add(lease);
+-      }
+-      lease.startedCreate(src);
++  synchronized long nextGenerationStampForBlock(Block block) throws IOException {
++    String msg = "Block " + block + " is already commited.";
++    BlockInfo storedBlock = blocksMap.getStoredBlock(block);
++    if (storedBlock == null) {
++      LOG.info(msg);
++      throw new IOException(msg);
+     }
++    INode fileINode = storedBlock.getINode();
++    if (!fileINode.isUnderConstruction()) {
++      LOG.info(msg);
++      throw new IOException(msg);
++    }
++    return nextGenerationStamp();
+   }
+ 
+-  /**
+-   * Returns the number of leases currently in the system
+-   */
+-  int countLease() {
+-    synchronized (sortedLeases) {
+-      return sortedLeases.size();
++  // rename was successful. If any part of the renamed subtree had
++  // files that were being written to, update with new filename.
++  //
++  void changeLease(String src, String dst, DFSFileInfo dinfo) 
++                   throws IOException {
++    String overwrite;
++    String replaceBy;
++
++    boolean destinationExisted = true;
++    if (dinfo == null) {
++      destinationExisted = false;
++    }
++
++    if (destinationExisted && dinfo.isDir()) {
++      Path spath = new Path(src);
++      overwrite = spath.getParent().toString() + Path.SEPARATOR;
++      replaceBy = dst + Path.SEPARATOR;
++    } else {
++      overwrite = src;
++      replaceBy = dst;
+     }
+-  }
+ 
++    leaseManager.changeLease(src, dst, overwrite, replaceBy);
++  }
++           
+   /**
+-   * Serializes leases. This current code does not save leases but will do
+-   * so in the future.
++   * Serializes leases. 
+    */
+   void saveFilesUnderConstruction(DataOutputStream out) throws IOException {
+-    out.writeInt(0);      // the number of leases
++    synchronized (leaseManager) {
++      out.writeInt(leaseManager.countPath()); // write the size
++
++      for (Lease lease : leaseManager.getSortedLeases()) {
++        Collection<StringBytesWritable> files = lease.getPaths();
++        for (Iterator<StringBytesWritable> i = files.iterator(); i.hasNext();){
++          String path = i.next().getString();
++
++          // verify that path exists in namespace
++          INode node = dir.getFileINode(path);
++          if (node == null) {
++            throw new IOException("saveLeases found path " + path +
++                                  " but no matching entry in namespace.");
++          }
++          if (!node.isUnderConstruction()) {
++            throw new IOException("saveLeases found path " + path +
++                                  " but is not under construction.");
++          }
++          INodeFileUnderConstruction cons = (INodeFileUnderConstruction) node;
++          FSImage.writeINodeUnderConstruction(out, cons, path);
++        }
++      }
++    }
+   }
+ }

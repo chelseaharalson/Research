@@ -1,0 +1,2561 @@
+--- JobTracker_0180.java	2008-08-14 15:48:24.000000000 -0400
++++ JobTracker_0190.java	2008-11-13 22:09:37.000000000 -0500
+@@ -22,14 +22,15 @@
+ import java.net.BindException;
+ import java.net.InetSocketAddress;
+ import java.net.UnknownHostException;
++import java.text.ParseException;
+ import java.text.SimpleDateFormat;
+ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Collections;
+ import java.util.Comparator;
+ import java.util.Date;
+-import java.util.HashSet;
+ import java.util.HashMap;
++import java.util.HashSet;
+ import java.util.Iterator;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+@@ -39,30 +40,32 @@
+ import java.util.TreeMap;
+ import java.util.TreeSet;
+ import java.util.Vector;
+-import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.CopyOnWriteArrayList;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+-import org.apache.hadoop.fs.permission.AccessControlException;
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.ipc.RPC;
+ import org.apache.hadoop.ipc.RemoteException;
+ import org.apache.hadoop.ipc.Server;
+ import org.apache.hadoop.ipc.RPC.VersionMismatch;
+-import org.apache.hadoop.metrics.MetricsContext;
+-import org.apache.hadoop.metrics.MetricsRecord;
+-import org.apache.hadoop.metrics.MetricsUtil;
+-import org.apache.hadoop.metrics.Updater;
+-import org.apache.hadoop.metrics.jvm.JvmMetrics;
++import org.apache.hadoop.mapred.JobHistory.Keys;
++import org.apache.hadoop.mapred.JobHistory.Listener;
++import org.apache.hadoop.mapred.JobHistory.Values;
++import org.apache.hadoop.mapred.JobStatusChangeEvent.EventType;
+ import org.apache.hadoop.net.DNSToSwitchMapping;
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.net.NetworkTopology;
+ import org.apache.hadoop.net.Node;
+ import org.apache.hadoop.net.NodeBase;
+ import org.apache.hadoop.net.ScriptBasedMapping;
++import org.apache.hadoop.security.AccessControlException;
++import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.util.HostsFileReader;
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.StringUtils;
+@@ -73,22 +76,23 @@
+  * tracking MR jobs in a network environment.
+  *
+  *******************************************************/
+-public class JobTracker implements MRConstants, InterTrackerProtocol, JobSubmissionProtocol {
++public class JobTracker implements MRConstants, InterTrackerProtocol,
++    JobSubmissionProtocol, TaskTrackerManager {
++
+   static long TASKTRACKER_EXPIRY_INTERVAL = 10 * 60 * 1000;
+   static long RETIRE_JOB_INTERVAL;
+   static long RETIRE_JOB_CHECK_INTERVAL;
+-  static float TASK_ALLOC_EPSILON;
+-  static float PAD_FRACTION;
+-  static final int MIN_CLUSTER_SIZE_FOR_PADDING = 3;
+   public static enum State { INITIALIZING, RUNNING }
+   State state = State.INITIALIZING;
+   private static final int SYSTEM_DIR_CLEANUP_RETRY_PERIOD = 10000;
+ 
+   private DNSToSwitchMapping dnsToSwitchMapping;
+   private NetworkTopology clusterMap = new NetworkTopology();
+-  private ResolutionThread resThread = new ResolutionThread();
+   private int numTaskCacheLevels; // the max level to which we cache tasks
+   private Set<Node> nodesAtMaxLevel = new HashSet<Node>();
++  private final TaskScheduler taskScheduler;
++  private final List<JobInProgressListener> jobInProgressListeners =
++    new CopyOnWriteArrayList<JobInProgressListener>();
+ 
+   // system directories are world-wide readable and owner readable
+   final static FsPermission SYSTEM_DIR_PERMISSION =
+@@ -109,9 +113,16 @@
+    */
+   final int MAX_COMPLETE_USER_JOBS_IN_MEMORY;
+ 
++   /**
++    * The minimum time (in ms) that a job's information has to remain
++    * in the JobTracker's memory before it is retired.
++    */
++  static final int MIN_TIME_BEFORE_RETIRE = 60000;
++
++
+   private int nextJobId = 1;
+ 
+-  public static final Log LOG = LogFactory.getLog("org.apache.hadoop.mapred.JobTracker");
++  public static final Log LOG = LogFactory.getLog(JobTracker.class);
+     
+   /**
+    * Start the JobTracker with given configuration.
+@@ -130,6 +141,7 @@
+     while (true) {
+       try {
+         result = new JobTracker(conf);
++        result.taskScheduler.setTaskTrackerManager(result);
+         break;
+       } catch (VersionMismatch e) {
+         throw e;
+@@ -213,7 +225,7 @@
+                                      tip.isMapTask()? TaskStatus.Phase.MAP:
+                                      TaskStatus.Phase.STARTING,
+                                      TaskStatus.State.FAILED,
+-                                     trackerName, myMetrics);
++                                     trackerName, myInstrumentation);
+                   }
+                   itr.remove();
+                 } else {
+@@ -338,12 +350,14 @@
+         try {
+           Thread.sleep(RETIRE_JOB_CHECK_INTERVAL);
+           List<JobInProgress> retiredJobs = new ArrayList<JobInProgress>();
+-          long retireBefore = System.currentTimeMillis() - 
+-            RETIRE_JOB_INTERVAL;
+-          synchronized (jobsByPriority) {
+-            for(JobInProgress job: jobsByPriority) {
++          long now = System.currentTimeMillis();
++          long retireBefore = now - RETIRE_JOB_INTERVAL;
++
++          synchronized (jobs) {
++            for(JobInProgress job: jobs.values()) {
+               if (job.getStatus().getRunState() != JobStatus.RUNNING &&
+                   job.getStatus().getRunState() != JobStatus.PREP &&
++                  (job.getFinishTime() + MIN_TIME_BEFORE_RETIRE < now) &&
+                   (job.getFinishTime()  < retireBefore)) {
+                 retiredJobs.add(job);
+               }
+@@ -352,28 +366,27 @@
+           if (!retiredJobs.isEmpty()) {
+             synchronized (JobTracker.this) {
+               synchronized (jobs) {
+-                synchronized (jobsByPriority) {
+-                  synchronized (jobInitQueue) {
+-                    for (JobInProgress job: retiredJobs) {
+-                      removeJobTasks(job);
+-                      jobs.remove(job.getProfile().getJobID());
+-                      jobInitQueue.remove(job);
+-                      jobsByPriority.remove(job);
+-                      String jobUser = job.getProfile().getUser();
+-                      synchronized (userToJobsMap) {
+-                        ArrayList<JobInProgress> userJobs =
+-                          userToJobsMap.get(jobUser);
+-                        synchronized (userJobs) {
+-                          userJobs.remove(job);
+-                        }
+-                        if (userJobs.isEmpty()) {
+-                          userToJobsMap.remove(jobUser);
+-                        }
++                synchronized (taskScheduler) {
++                  for (JobInProgress job: retiredJobs) {
++                    removeJobTasks(job);
++                    jobs.remove(job.getProfile().getJobID());
++                    for (JobInProgressListener l : jobInProgressListeners) {
++                      l.jobRemoved(job);
++                    }
++                    String jobUser = job.getProfile().getUser();
++                    synchronized (userToJobsMap) {
++                      ArrayList<JobInProgress> userJobs =
++                        userToJobsMap.get(jobUser);
++                      synchronized (userJobs) {
++                        userJobs.remove(job);
++                      }
++                      if (userJobs.isEmpty()) {
++                        userToJobsMap.remove(jobUser);
+                       }
+-                      LOG.info("Retired job with id: '" + 
+-                               job.getProfile().getJobID() + "' of user '" +
+-                               jobUser + "'");
+                     }
++                    LOG.info("Retired job with id: '" + 
++                             job.getProfile().getJobID() + "' of user '" +
++                             jobUser + "'");
+                   }
+                 }
+               }
+@@ -389,114 +402,523 @@
+     }
+   }
+ 
+-  /////////////////////////////////////////////////////////////////
+-  //  Used to init new jobs that have just been created
+-  /////////////////////////////////////////////////////////////////
+-  class JobInitThread implements Runnable {
+-    public JobInitThread() {
+-    }
+-    public void run() {
+-      JobInProgress job;
+-      while (true) {
+-        job = null;
+-        try {
+-          synchronized (jobInitQueue) {
+-            while (jobInitQueue.isEmpty()) {
+-              jobInitQueue.wait();
+-            }
+-            job = jobInitQueue.remove(0);
++ 
++  ///////////////////////////////////////////////////////
++  // Used to recover the jobs upon restart
++  ///////////////////////////////////////////////////////
++  class RecoveryManager {
++    Set<JobID> jobsToRecover; // set of jobs to be recovered
++    
++    private int totalEventsRecovered = 0;
++    
++    /** A custom listener that replays the events in the order in which the 
++     * events (task attempts) occurred. 
++     */
++    class JobRecoveryListener implements Listener {
++      // The owner job
++      private JobInProgress jip;
++      
++      private JobHistory.JobInfo job; // current job's info object
++      
++      // Maintain the count of the (attempt) events recovered
++      private int numEventsRecovered = 0;
++      
++      // Maintains open transactions
++      private Map<String, String> hangingAttempts = 
++        new HashMap<String, String>();
++      
++      // Whether there are any updates for this job
++      private boolean hasUpdates = false;
++      
++      public JobRecoveryListener(JobInProgress jip) {
++        this.jip = jip;
++        this.job = new JobHistory.JobInfo(jip.getJobID().toString());
++      }
++
++      /**
++       * Process a task. Note that a task might commit a previously pending 
++       * transaction.
++       */
++      private void processTask(String taskId, JobHistory.Task task) {
++        // Any TASK info commits the previous transaction
++        boolean hasHanging = hangingAttempts.remove(taskId) != null;
++        if (hasHanging) {
++          numEventsRecovered += 2;
++        }
++        
++        TaskID id = TaskID.forName(taskId);
++        TaskInProgress tip = getTip(id);
++        
++        updateTip(tip, task);
++      }
++
++      /**
++       * Adds a task-attempt in the listener
++       */
++      private void processTaskAttempt(String taskAttemptId, 
++                                      JobHistory.TaskAttempt attempt) {
++        TaskAttemptID id = TaskAttemptID.forName(taskAttemptId);
++        
++        // Check if the transaction for this attempt can be committed
++        String taskStatus = attempt.get(Keys.TASK_STATUS);
++        
++        if (taskStatus.length() > 0) {
++          // This means this is an update event
++          if (taskStatus.equals(Values.SUCCESS.name())) {
++            // Mark this attempt as hanging
++            hangingAttempts.put(id.getTaskID().toString(), taskAttemptId);
++            addSuccessfulAttempt(jip, id, attempt);
++          } else {
++            addUnsuccessfulAttempt(jip, id, attempt);
++            numEventsRecovered += 2;
+           }
+-          job.initTasks();
+-        } catch (InterruptedException t) {
+-          break;
+-        } catch (Throwable t) {
+-          LOG.error("Job initialization failed:\n" +
+-                    StringUtils.stringifyException(t));
+-          if (job != null) {
+-            job.kill();
++        } else {
++          createTaskAttempt(jip, id, attempt);
++        }
++      }
++
++      public void handle(JobHistory.RecordTypes recType, Map<Keys, 
++                         String> values) throws IOException {
++        if (recType == JobHistory.RecordTypes.Job) {
++          // Update the meta-level job information
++          job.handle(values);
++          
++          // Forcefully init the job as we have some updates for it
++          checkAndInit();
++        } else if (recType.equals(JobHistory.RecordTypes.Task)) {
++          String taskId = values.get(Keys.TASKID);
++          
++          // Create a task
++          JobHistory.Task task = new JobHistory.Task();
++          task.handle(values);
++          
++          // Ignore if its a cleanup task
++          if (isCleanup(task)) {
++            return;
++          }
++            
++          // Process the task i.e update the tip state
++          processTask(taskId, task);
++        } else if (recType.equals(JobHistory.RecordTypes.MapAttempt)) {
++          String attemptId = values.get(Keys.TASK_ATTEMPT_ID);
++          
++          // Create a task attempt
++          JobHistory.MapAttempt attempt = new JobHistory.MapAttempt();
++          attempt.handle(values);
++          
++          // Ignore if its a cleanup task
++          if (isCleanup(attempt)) {
++            return;
++          }
++          
++          // Process the attempt i.e update the attempt state via job
++          processTaskAttempt(attemptId, attempt);
++        } else if (recType.equals(JobHistory.RecordTypes.ReduceAttempt)) {
++          String attemptId = values.get(Keys.TASK_ATTEMPT_ID);
++          
++          // Create a task attempt
++          JobHistory.ReduceAttempt attempt = new JobHistory.ReduceAttempt();
++          attempt.handle(values);
++          
++          // Ignore if its a cleanup task
++          if (isCleanup(attempt)) {
++            return;
+           }
++          
++          // Process the attempt i.e update the job state via job
++          processTaskAttempt(attemptId, attempt);
+         }
+       }
+-    }
+-  }
+ 
+-  static class JobTrackerMetrics implements Updater {
+-    private MetricsRecord metricsRecord = null;
+-    private int numMapTasksLaunched = 0;
+-    private int numMapTasksCompleted = 0;
+-    private int numReduceTasksLaunched = 0;
+-    private int numReduceTasksCompleted = 0;
+-    private int numJobsSubmitted = 0;
+-    private int numJobsCompleted = 0;
+-    private JobTracker tracker;
+-      
+-    JobTrackerMetrics(JobTracker tracker, JobConf conf) {
+-      String sessionId = conf.getSessionId();
+-      // Initiate JVM Metrics
+-      JvmMetrics.init("JobTracker", sessionId);
+-      // Create a record for map-reduce metrics
+-      MetricsContext context = MetricsUtil.getContext("mapred");
+-      metricsRecord = MetricsUtil.createRecord(context, "jobtracker");
+-      metricsRecord.setTag("sessionId", sessionId);
+-      this.tracker = tracker;
+-      context.registerUpdater(this);
+-    }
++      // Check if the task is of type CLEANUP
++      private boolean isCleanup(JobHistory.Task task) {
++        String taskType = task.get(Keys.TASK_TYPE);
++        return Values.CLEANUP.name().equals(taskType);
++      }
+       
+-    /**
+-     * Since this object is a registered updater, this method will be called
+-     * periodically, e.g. every 5 seconds.
+-     */
+-    public void doUpdates(MetricsContext unused) {
+-      synchronized (this) {
+-        metricsRecord.incrMetric("maps_launched", numMapTasksLaunched);
+-        metricsRecord.incrMetric("maps_completed", numMapTasksCompleted);
+-        metricsRecord.incrMetric("reduces_launched", numReduceTasksLaunched);
+-        metricsRecord.incrMetric("reduces_completed", numReduceTasksCompleted);
+-        metricsRecord.incrMetric("jobs_submitted", numJobsSubmitted);
+-        metricsRecord.incrMetric("jobs_completed", numJobsCompleted);
+-              
+-        numMapTasksLaunched = 0;
+-        numMapTasksCompleted = 0;
+-        numReduceTasksLaunched = 0;
+-        numReduceTasksCompleted = 0;
+-        numJobsSubmitted = 0;
+-        numJobsCompleted = 0;
++      // Init the job if its ready for init. Also make sure that the scheduler
++      // is updated
++      private void checkAndInit() throws IOException {
++        String jobStatus = this.job.get(Keys.JOB_STATUS);
++        if (Values.PREP.name().equals(jobStatus)) {
++          hasUpdates = true;
++          LOG.info("Calling init from RM for job " + jip.getJobID().toString());
++          jip.initTasks();
++        }
+       }
+-      metricsRecord.update();
+-
+-      if (tracker != null) {
+-        for (JobInProgress jip : tracker.getRunningJobs()) {
+-          jip.updateMetrics();
++      
++      void close() {
++        if (hasUpdates) {
++          // Apply the final (job-level) updates
++          JobStatusChangeEvent event = updateJob(jip, job);
++          
++          // Update the job listeners
++          updateJobInProgressListeners(event);
+         }
+       }
++      
++      public int getNumEventsRecovered() {
++        return numEventsRecovered;
++      }
++
++    }
++    
++    public RecoveryManager() {
++      jobsToRecover = new TreeSet<JobID>();
+     }
+ 
+-    synchronized void launchMap() {
+-      ++numMapTasksLaunched;
++    public boolean contains(JobID id) {
++      return jobsToRecover.contains(id);
+     }
+-      
+-    synchronized void completeMap() {
+-      ++numMapTasksCompleted;
++
++    void addJobForRecovery(JobID id) {
++      jobsToRecover.add(id);
+     }
+-      
+-    synchronized void launchReduce() {
+-      ++numReduceTasksLaunched;
++
++    public boolean shouldRecover() {
++      return jobsToRecover.size() != 0;
+     }
+-      
+-    synchronized void completeReduce() {
+-      ++numReduceTasksCompleted;
++
++    /** Check if the given string represents a job-id or not 
++     */
++    private boolean isJobNameValid(String str) {
++      if(str == null) {
++        return false;
++      }
++      String[] parts = str.split("_");
++      if(parts.length == 3) {
++        if(parts[0].equals("job")) {
++            // other 2 parts should be parseable
++            return JobTracker.validateIdentifier(parts[1])
++                   && JobTracker.validateJobNumber(parts[2]);
++        }
++      }
++      return false;
++    }
++    
++    // checks if the job dir has the required files
++    public void checkAndAddJob(FileStatus status) throws IOException {
++      String jobName = status.getPath().getName();
++      if (isJobNameValid(jobName)) {
++        if (JobClient.isJobDirValid(status.getPath(), fs)) {
++          recoveryManager.addJobForRecovery(JobID.forName(jobName));
++        } else {
++          LOG.info("Found an incomplete job directory " + jobName + "." 
++                   + " Deleting it!!");
++          fs.delete(status.getPath(), true);
++        }
++      } else {
++        LOG.info("Deleting " + status.getPath());
++        fs.delete(status.getPath(), true);
++      }
+     }
++    
++    private JobStatusChangeEvent updateJob(JobInProgress jip, 
++                                           JobHistory.JobInfo job) {
++      // Change the job priority
++      String jobpriority = job.get(Keys.JOB_PRIORITY);
++      JobPriority priority = JobPriority.valueOf(jobpriority);
++      // It's important to update this via the jobtracker's api as it will 
++      // take care of updating the event listeners too
++      setJobPriority(jip.getJobID(), priority);
++
++      // Save the previous job status
++      JobStatus oldStatus = (JobStatus)jip.getStatus().clone();
++      
++      // Set the start/launch time only if there are recovered tasks
++      // Increment the job's restart count
++      jip.updateJobInfo(job.getLong(JobHistory.Keys.SUBMIT_TIME), 
++                        job.getLong(JobHistory.Keys.LAUNCH_TIME),
++                        job.getInt(Keys.RESTART_COUNT) + 1);
++
++      // Save the new job status
++      JobStatus newStatus = (JobStatus)jip.getStatus().clone();
++      
++      return new JobStatusChangeEvent(jip, EventType.START_TIME_CHANGED, oldStatus, 
++                                      newStatus);
++    }
++    
++    private void updateTip(TaskInProgress tip, JobHistory.Task task) {
++      long startTime = task.getLong(Keys.START_TIME);
++      if (startTime != 0) {
++        tip.setExecStartTime(startTime);
++      }
++      
++      long finishTime = task.getLong(Keys.FINISH_TIME);
++      // For failed tasks finish-time will be missing
++      if (finishTime != 0) {
++        tip.setExecFinishTime(finishTime);
++      }
++      
++      String cause = task.get(Keys.TASK_ATTEMPT_ID);
++      if (cause.length() > 0) {
++        // This means that the this is a FAILED events
++        TaskAttemptID id = TaskAttemptID.forName(cause);
++        TaskStatus status = tip.getTaskStatus(id);
++        // This will add the tip failed event in the new log
++        tip.getJob().failedTask(tip, id, status.getDiagnosticInfo(), 
++                                status.getPhase(), status.getRunState(), 
++                                status.getTaskTracker(), myInstrumentation);
++      }
++    }
++    
++    private void createTaskAttempt(JobInProgress job, 
++                                   TaskAttemptID attemptId, 
++                                   JobHistory.TaskAttempt attempt) {
++      TaskID id = attemptId.getTaskID();
++      String type = attempt.get(Keys.TASK_TYPE);
++      TaskInProgress tip = job.getTaskInProgress(id);
++      
++      //    I. Get the required info
++      TaskStatus taskStatus = null;
++      String trackerName = attempt.get(Keys.TRACKER_NAME);
++      String trackerHostName = 
++        JobInProgress.convertTrackerNameToHostName(trackerName);
++      int index = trackerHostName.indexOf("_");
++      trackerHostName = 
++        trackerHostName.substring(index + 1, trackerHostName.length());
++      int port = attempt.getInt(Keys.HTTP_PORT);
++      
++      long attemptStartTime = attempt.getLong(Keys.START_TIME);
++
++      // II. Create the (appropriate) task status
++      if (type.equals(Values.MAP.name())) {
++        taskStatus = 
++          new MapTaskStatus(attemptId, 0.0f, TaskStatus.State.RUNNING, 
++                            "", "", trackerName, TaskStatus.Phase.MAP, 
++                            new Counters());
++      } else {
++        taskStatus = 
++          new ReduceTaskStatus(attemptId, 0.0f, TaskStatus.State.RUNNING, 
++                               "", "", trackerName, TaskStatus.Phase.REDUCE, 
++                               new Counters());
++      }
++
++      // Set the start time
++      taskStatus.setStartTime(attemptStartTime);
++
++      List<TaskStatus> ttStatusList = new ArrayList<TaskStatus>();
++      ttStatusList.add(taskStatus);
++      
++      // III. Create the dummy tasktracker status
++      TaskTrackerStatus ttStatus = 
++        new TaskTrackerStatus(trackerName, trackerHostName, port, ttStatusList, 
++                              0 , 0, 0);
++      ttStatus.setLastSeen(System.currentTimeMillis());
++
++      // IV. Register a new tracker
++      boolean isTrackerRegistered = getTaskTracker(trackerName) != null;
++      if (!isTrackerRegistered) {
++        addNewTracker(ttStatus);
++      }
++      
++      // V. Update the tracker status
++      //    This will update the meta info of the jobtracker and also add the
++      //    tracker status if missing i.e register it
++      updateTaskTrackerStatus(trackerName, ttStatus);
++      
++      // VI. Register the attempt
++      //   a) In the job
++      job.addRunningTaskToTIP(tip, attemptId, ttStatus, false);
++      //   b) In the tip
++      tip.updateStatus(taskStatus);
++      
++      // VII. Make an entry in the launched tasks
++      expireLaunchingTasks.addNewTask(attemptId);
++    }
++    
++    private void addSuccessfulAttempt(JobInProgress job, 
++                                      TaskAttemptID attemptId, 
++                                      JobHistory.TaskAttempt attempt) {
++      // I. Get the required info
++      TaskID taskId = attemptId.getTaskID();
++      String type = attempt.get(Keys.TASK_TYPE);
++
++      TaskInProgress tip = job.getTaskInProgress(taskId);
++      long attemptFinishTime = attempt.getLong(Keys.FINISH_TIME);
++
++      // Get the task status and the tracker name and make a copy of it
++      TaskStatus taskStatus = (TaskStatus)tip.getTaskStatus(attemptId).clone();
++      taskStatus.setFinishTime(attemptFinishTime);
++
++      String stateString = attempt.get(Keys.STATE_STRING);
++
++      // Update the basic values
++      taskStatus.setStateString(stateString);
++      taskStatus.setProgress(1.0f);
++      taskStatus.setRunState(TaskStatus.State.SUCCEEDED);
++
++      // Set the shuffle/sort finished times
++      if (type.equals(Values.REDUCE.name())) {
++        long shuffleTime = 
++          Long.parseLong(attempt.get(Keys.SHUFFLE_FINISHED));
++        long sortTime = 
++          Long.parseLong(attempt.get(Keys.SORT_FINISHED));
++        taskStatus.setShuffleFinishTime(shuffleTime);
++        taskStatus.setSortFinishTime(sortTime);
++      }
++
++      // Add the counters
++      String counterString = attempt.get(Keys.COUNTERS);
++      Counters counter = null;
++      //TODO Check if an exception should be thrown
++      try {
++        counter = Counters.fromEscapedCompactString(counterString);
++      } catch (ParseException pe) { 
++        counter = new Counters(); // Set it to empty counter
++      }
++      taskStatus.setCounters(counter);
+       
+-    synchronized void submitJob() {
+-      ++numJobsSubmitted;
++      // II. Replay the status
++      job.updateTaskStatus(tip, taskStatus, myInstrumentation);
++      
++      // III. Prevent the task from expiry
++      expireLaunchingTasks.removeTask(attemptId);
+     }
++    
++    private void addUnsuccessfulAttempt(JobInProgress job,
++                                        TaskAttemptID attemptId,
++                                        JobHistory.TaskAttempt attempt) {
++      // I. Get the required info
++      TaskID taskId = attemptId.getTaskID();
++      TaskInProgress tip = job.getTaskInProgress(taskId);
++      long attemptFinishTime = attempt.getLong(Keys.FINISH_TIME);
++
++      TaskStatus taskStatus = (TaskStatus)tip.getTaskStatus(attemptId).clone();
++      taskStatus.setFinishTime(attemptFinishTime);
++
++      // Reset the progress
++      taskStatus.setProgress(0.0f);
+       
+-    synchronized void completeJob() {
+-      ++numJobsCompleted;
++      String stateString = attempt.get(Keys.STATE_STRING);
++      taskStatus.setStateString(stateString);
++
++      boolean hasFailed = 
++        attempt.get(Keys.TASK_STATUS).equals(Values.FAILED.name());
++      // Set the state failed/killed
++      if (hasFailed) {
++        taskStatus.setRunState(TaskStatus.State.FAILED);
++      } else {
++        taskStatus.setRunState(TaskStatus.State.KILLED);
++      }
++
++      // Get/Set the error msg
++      String diagInfo = attempt.get(Keys.ERROR);
++      taskStatus.setDiagnosticInfo(diagInfo); // diag info
++
++      // II. Update the task status
++     job.updateTaskStatus(tip, taskStatus, myInstrumentation);
++
++     // III. Prevent the task from expiry
++     expireLaunchingTasks.removeTask(attemptId);
++    }
++  
++    public void recover() throws IOException {
++      // I. Init the jobs and cache the recovered job history filenames
++      Map<JobID, Path> jobHistoryFilenameMap = new HashMap<JobID, Path>();
++      for (JobID id : jobsToRecover) {
++        // 1. Create the job object
++        JobInProgress job = new JobInProgress(id, JobTracker.this, conf);
++        
++        // 2. Get the log file and the file path
++        String logFileName = 
++          JobHistory.JobInfo.getJobHistoryFileName(job.getJobConf(), id);
++        Path jobHistoryFilePath = 
++          JobHistory.JobInfo.getJobHistoryLogLocation(logFileName);
++        
++        // 3. Recover the history file. This involved
++        //     - deleting file.recover if file exists
++        //     - renaming file.recover to file if file doesnt exist
++        // This makes sure that the (master) file exists
++        JobHistory.JobInfo.recoverJobHistoryFile(job.getJobConf(), 
++                                                 jobHistoryFilePath);
++
++        // 4. Cache the history file name as it costs one dfs access
++        jobHistoryFilenameMap.put(job.getJobID(), jobHistoryFilePath);
++
++        // 5. Sumbit the job to the jobtracker
++        addJob(id, job);
++      }
++
++      long recoveryStartTime = System.currentTimeMillis();
++
++      // II. Recover each job
++      for (JobID id : jobsToRecover) {
++        JobInProgress pJob = getJob(id);
++
++        // 1. Get the required info
++        // Get the recovered history file
++        Path jobHistoryFilePath = jobHistoryFilenameMap.get(pJob.getJobID());
++        String logFileName = jobHistoryFilePath.getName();
++
++        FileSystem fs = jobHistoryFilePath.getFileSystem(conf);
++
++        // 2. Parse the history file
++        // Note that this also involves job update
++        JobRecoveryListener listener = new JobRecoveryListener(pJob);
++        try {
++          JobHistory.parseHistoryFromFS(jobHistoryFilePath.toString(), 
++                                        listener, fs);
++        } catch (IOException e) {
++          LOG.info("JobTracker failed to recover job " + pJob + "."
++                   + " Ignoring it.", e);
++          continue;
++        }
++
++        // 3. Close the listener
++        listener.close();
++
++        // 4. Update the recovery metric
++        totalEventsRecovered += listener.getNumEventsRecovered();
++
++        // 5. Cleanup history
++        // Delete the master log file as an indication that the new file
++        // should be used in future
++        synchronized (pJob) {
++          JobHistory.JobInfo.checkpointRecovery(logFileName, 
++              pJob.getJobConf());
++        }
++
++        // 6. Inform the jobtracker as to how much of the data is recovered.
++        // This is done so that TT should rollback to account for lost
++        // updates
++        lastSeenEventMapOnRestart.put(pJob.getStatus().getJobID(), 
++                                      pJob.getNumTaskCompletionEvents());
++      }
++
++      recoveryDuration = System.currentTimeMillis() - recoveryStartTime;
++      hasRecovered = true;
++
++      // III. Finalize the recovery
++      // Make sure that the tracker statuses in the expiry-tracker queue
++      // are updated
++      long now = System.currentTimeMillis();
++      int size = trackerExpiryQueue.size();
++      for (int i = 0; i < size ; ++i) {
++        // Get the first status
++        TaskTrackerStatus status = trackerExpiryQueue.first();
++
++        // Remove it
++        trackerExpiryQueue.remove(status);
++
++        // Set the new time
++        status.setLastSeen(now);
++
++        // Add back to get the sorted list
++        trackerExpiryQueue.add(status);
++      }
++
++      // IV. Cleanup
++      jobsToRecover.clear();
++      LOG.info("Restoration complete");
++    }
++    
++    int totalEventsRecovered() {
++      return totalEventsRecovered;
+     }
+   }
+ 
+-  private JobTrackerMetrics myMetrics = null;
++  private JobTrackerInstrumentation myInstrumentation = null;
+     
+   /////////////////////////////////////////////////////////////////
+   // The real JobTracker
+@@ -509,6 +931,11 @@
+   private int totalMapTaskCapacity;
+   private int totalReduceTaskCapacity;
+   private HostsFileReader hostsReader;
++  
++  // JobTracker recovery variables
++  private volatile boolean hasRestarted = false;
++  private volatile boolean hasRecovered = false;
++  private volatile long recoveryDuration;
+ 
+   //
+   // Properties to maintain while running Jobs and Tasks:
+@@ -528,7 +955,6 @@
+ 
+   // All the known jobs.  (jobid->JobInProgress)
+   Map<JobID, JobInProgress> jobs = new TreeMap<JobID, JobInProgress>();
+-  List<JobInProgress> jobsByPriority = new ArrayList<JobInProgress>();
+ 
+   // (user -> list of JobInProgress)
+   TreeMap<String, ArrayList<JobInProgress>> userToJobsMap =
+@@ -557,6 +983,10 @@
+   Map<String, Node> hostnameToNodeMap = 
+     Collections.synchronizedMap(new TreeMap<String, Node>());
+   
++  // A map from JobID to the last known task-completion-event-index on restart
++  Map<JobID, Integer> lastSeenEventMapOnRestart = 
++    new HashMap<JobID, Integer>();
++  
+   // Number of resolved entries
+   int numResolved;
+     
+@@ -568,20 +998,18 @@
+   int totalReduces = 0;
+   private HashMap<String, TaskTrackerStatus> taskTrackers =
+     new HashMap<String, TaskTrackerStatus>();
+-  HashMap<String,Integer>uniqueHostsMap = new HashMap<String, Integer>();
+-  List<JobInProgress> jobInitQueue = new ArrayList<JobInProgress>();
++  Map<String,Integer>uniqueHostsMap = new ConcurrentHashMap<String, Integer>();
+   ExpireTrackers expireTrackers = new ExpireTrackers();
+   Thread expireTrackersThread = null;
+   RetireJobs retireJobs = new RetireJobs();
+   Thread retireJobsThread = null;
+-  JobInitThread initJobs = new JobInitThread();
+-  Thread initJobsThread = null;
+   ExpireLaunchingTasks expireLaunchingTasks = new ExpireLaunchingTasks();
+   Thread expireLaunchingTaskThread = new Thread(expireLaunchingTasks,
+                                                 "expireLaunchingTasks");
+ 
+   CompletedJobStatusStore completedJobStatusStore = null;
+   Thread completedJobsStoreThread = null;
++  RecoveryManager recoveryManager;
+ 
+   /**
+    * It might seem like a bug to maintain a TreeSet of status objects,
+@@ -620,8 +1048,8 @@
+   Path systemDir = null;
+   private JobConf conf;
+ 
+-  private Thread taskCommitThread;
+-  
++  private QueueManager queueManager;
++
+   /**
+    * Start the JobTracker process, listen on the indicated port
+    */
+@@ -633,9 +1061,6 @@
+       conf.getLong("mapred.tasktracker.expiry.interval", 10 * 60 * 1000);
+     RETIRE_JOB_INTERVAL = conf.getLong("mapred.jobtracker.retirejob.interval", 24 * 60 * 60 * 1000);
+     RETIRE_JOB_CHECK_INTERVAL = conf.getLong("mapred.jobtracker.retirejob.check", 60 * 1000);
+-    TASK_ALLOC_EPSILON = conf.getFloat("mapred.jobtracker.taskalloc.loadbalance.epsilon", 0.2f);
+-    PAD_FRACTION = conf.getFloat("mapred.jobtracker.taskalloc.capacitypad", 
+-                                 0.01f);
+     MAX_COMPLETE_USER_JOBS_IN_MEMORY = conf.getInt("mapred.jobtracker.completeuserjobs.maximum", 100);
+ 
+     // This is a directory of temporary submission files.  We delete it
+@@ -646,6 +1071,14 @@
+     // Read the hosts/exclude files to restrict access to the jobtracker.
+     this.hostsReader = new HostsFileReader(conf.get("mapred.hosts", ""),
+                                            conf.get("mapred.hosts.exclude", ""));
++    
++    queueManager = new QueueManager(this.conf);
++    
++    // Create the scheduler
++    Class<? extends TaskScheduler> schedulerClass
++      = conf.getClass("mapred.jobtracker.taskScheduler",
++          JobQueueTaskScheduler.class, TaskScheduler.class);
++    taskScheduler = (TaskScheduler) ReflectionUtils.newInstance(schedulerClass, conf);
+                                            
+     // Set ports, start RPC servers, etc.
+     InetSocketAddress addr = getAddress(conf);
+@@ -653,7 +1086,6 @@
+     this.port = addr.getPort();
+     int handlerCount = conf.getInt("mapred.job.tracker.handler.count", 10);
+     this.interTrackerServer = RPC.getServer(this, addr.getHostName(), addr.getPort(), handlerCount, false, conf);
+-    this.interTrackerServer.start();
+     if (LOG.isDebugEnabled()) {
+       Properties p = System.getProperties();
+       for (Iterator it = p.keySet().iterator(); it.hasNext();) {
+@@ -670,11 +1102,13 @@
+     InetSocketAddress infoSocAddr = NetUtils.createSocketAddr(infoAddr);
+     String infoBindAddress = infoSocAddr.getHostName();
+     int tmpInfoPort = infoSocAddr.getPort();
++    this.startTime = System.currentTimeMillis();
+     infoServer = new StatusHttpServer("job", infoBindAddress, tmpInfoPort, 
+-                                      tmpInfoPort == 0);
++        tmpInfoPort == 0, conf);
+     infoServer.setAttribute("job.tracker", this);
+     // initialize history parameters.
+-    boolean historyInitialized = JobHistory.init(conf, this.localMachine);
++    boolean historyInitialized = JobHistory.init(conf, this.localMachine,
++                                                 this.startTime);
+     String historyLogDir = null;
+     FileSystem historyFS = null;
+     if (historyInitialized) {
+@@ -684,12 +1118,21 @@
+       infoServer.setAttribute("fileSys", historyFS);
+     }
+     infoServer.start();
++    
++    trackerIdentifier = getDateFormat().format(new Date());
+ 
+-    this.startTime = System.currentTimeMillis();
+-    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMddHHmm");
+-    trackerIdentifier = dateFormat.format(new Date());
+-
+-    myMetrics = new JobTrackerMetrics(this, jobConf);
++    Class<? extends JobTrackerInstrumentation> metricsInst = getInstrumentationClass(jobConf);
++    try {
++      java.lang.reflect.Constructor<? extends JobTrackerInstrumentation> c =
++        metricsInst.getConstructor(new Class[] {JobTracker.class, JobConf.class} );
++      this.myInstrumentation = c.newInstance(this, jobConf);
++    } catch(Exception e) {
++      //Reflection can throw lots of exceptions -- handle them all by 
++      //falling back on the default.
++      LOG.error("failed to initialize job tracker metrics", e);
++      this.myInstrumentation = new JobTrackerMetricsInst(this, jobConf);
++    }
++ 
+     
+     // The rpc/web-server ports can be ephemeral ports... 
+     // ... ensure we have the correct info
+@@ -701,6 +1144,9 @@
+         infoBindAddress + ":" + this.infoPort); 
+     LOG.info("JobTracker webserver: " + this.infoServer.getPort());
+     
++    // start the recovery manager
++    recoveryManager = new RecoveryManager();
++    
+     while (true) {
+       try {
+         // if we haven't contacted the namenode go ahead and do it
+@@ -712,6 +1158,24 @@
+         if(systemDir == null) {
+           systemDir = new Path(getSystemDir());    
+         }
++        // Make sure that the backup data is preserved
++        FileStatus[] systemDirData = fs.listStatus(this.systemDir);
++        LOG.info("Cleaning up the system directory");
++        // Check if the history is enabled .. as we cant have persistence with 
++        // history disabled
++        if (conf.getBoolean("mapred.jobtracker.restart.recover", false) 
++            && !JobHistory.isDisableHistory()
++            && systemDirData != null) {
++          for (FileStatus status : systemDirData) {
++            recoveryManager.checkAndAddJob(status);
++          }
++          
++          // Check if there are jobs to be recovered
++          hasRestarted = recoveryManager.shouldRecover();
++          if (hasRestarted) {
++            break; // if there is something to recover else clean the sys dir
++          }
++        }
+         fs.delete(systemDir, true);
+         if (FileSystem.mkdirs(fs, systemDir, 
+             new FsPermission(SYSTEM_DIR_PERMISSION))) {
+@@ -734,26 +1198,76 @@
+     // Initialize history again if it is not initialized
+     // because history was on dfs and namenode was in safemode.
+     if (!historyInitialized) {
+-      JobHistory.init(conf, this.localMachine); 
++      JobHistory.init(conf, this.localMachine, this.startTime); 
+       historyLogDir = conf.get("hadoop.job.history.location");
+       infoServer.setAttribute("historyLogDir", historyLogDir);
+       historyFS = new Path(historyLogDir).getFileSystem(conf);
+       infoServer.setAttribute("fileSys", historyFS);
+     }
+ 
+-    this.dnsToSwitchMapping = (DNSToSwitchMapping)ReflectionUtils.newInstance(
++    this.dnsToSwitchMapping = ReflectionUtils.newInstance(
+         conf.getClass("topology.node.switch.mapping.impl", ScriptBasedMapping.class,
+             DNSToSwitchMapping.class), conf);
+     this.numTaskCacheLevels = conf.getInt("mapred.task.cache.levels", 
+         NetworkTopology.DEFAULT_HOST_LEVEL);
+-    synchronized (this) {
+-      state = State.RUNNING;
+-    }
+ 
+     //initializes the job status store
+     completedJobStatusStore = new CompletedJobStatusStore(conf,fs);
++  }
+ 
+-    LOG.info("Starting RUNNING");
++  private static SimpleDateFormat getDateFormat() {
++    return new SimpleDateFormat("yyyyMMddHHmm");
++  }
++
++  static boolean validateIdentifier(String id) {
++    try {
++      // the jobtracker id should be 'date' parseable
++      getDateFormat().parse(id);
++      return true;
++    } catch (ParseException pe) {}
++    return false;
++  }
++
++  static boolean validateJobNumber(String id) {
++    try {
++      // the job number should be integer parseable
++      Integer.parseInt(id);
++      return true;
++    } catch (IllegalArgumentException pe) {}
++    return false;
++  }
++
++  /**
++   * Whether the JT has restarted
++   */
++  public boolean hasRestarted() {
++    return hasRestarted;
++  }
++
++  /**
++   * Whether the JT has recovered upon restart
++   */
++  public boolean hasRecovered() {
++    return hasRecovered;
++  }
++
++  /**
++   * How long the jobtracker took to recover from restart.
++   */
++  public long getRecoveryDuration() {
++    return hasRestarted() 
++           ? recoveryDuration
++           : 0;
++  }
++
++  public static Class<? extends JobTrackerInstrumentation> getInstrumentationClass(Configuration conf) {
++    return conf.getClass("mapred.jobtracker.instrumentation",
++        JobTrackerMetricsInst.class, JobTrackerInstrumentation.class);
++  }
++  
++  public static void setInstrumentationClass(Configuration conf, Class<? extends JobTrackerInstrumentation> t) {
++    conf.setClass("mapred.jobtracker.instrumentation",
++        t, JobTrackerInstrumentation.class);
+   }
+ 
+   public static InetSocketAddress getAddress(Configuration conf) {
+@@ -765,18 +1279,18 @@
+   /**
+    * Run forever
+    */
+-  public void offerService() throws InterruptedException {
++  public void offerService() throws InterruptedException, IOException {
++    taskScheduler.start();
++    
++    //  Start the recovery after starting the scheduler
++    recoveryManager.recover();
++    
+     this.expireTrackersThread = new Thread(this.expireTrackers,
+                                           "expireTrackers");
+     this.expireTrackersThread.start();
+-    this.resThread.start();
+     this.retireJobsThread = new Thread(this.retireJobs, "retireJobs");
+     this.retireJobsThread.start();
+-    this.initJobsThread = new Thread(this.initJobs, "initJobs");
+-    this.initJobsThread.start();
+     expireLaunchingTaskThread.start();
+-    this.taskCommitThread = new TaskCommitQueue();
+-    this.taskCommitThread.start();
+ 
+     if (completedJobStatusStore.isActive()) {
+       completedJobsStoreThread = new Thread(completedJobStatusStore,
+@@ -784,6 +1298,14 @@
+       completedJobsStoreThread.start();
+     }
+ 
++    // start the inter-tracker server once the jt is ready
++    this.interTrackerServer.start();
++    
++    synchronized (this) {
++      state = State.RUNNING;
++    }
++    LOG.info("Starting RUNNING");
++    
+     this.interTrackerServer.join();
+     LOG.info("Stopped interTrackerServer");
+   }
+@@ -819,14 +1341,8 @@
+         ex.printStackTrace();
+       }
+     }
+-    if (this.initJobsThread != null && this.initJobsThread.isAlive()) {
+-      LOG.info("Stopping initer");
+-      this.initJobsThread.interrupt();
+-      try {
+-        this.initJobsThread.join();
+-      } catch (InterruptedException ex) {
+-        ex.printStackTrace();
+-      }
++    if (taskScheduler != null) {
++      taskScheduler.terminate();
+     }
+     if (this.expireLaunchingTaskThread != null && this.expireLaunchingTaskThread.isAlive()) {
+       LOG.info("Stopping expireLaunchingTasks");
+@@ -837,24 +1353,6 @@
+         ex.printStackTrace();
+       }
+     }
+-    if (this.taskCommitThread != null) {
+-      LOG.info("Stopping TaskCommit thread");
+-      this.taskCommitThread.interrupt();
+-      try {
+-        this.taskCommitThread.join();
+-      } catch (InterruptedException ex) {
+-        ex.printStackTrace();
+-      }
+-    }
+-    if (this.resThread != null) {
+-      LOG.info("Stopping DNSToSwitchMapping Resolution thread");
+-      this.resThread.interrupt();
+-      try {
+-        this.resThread.join();
+-      } catch (InterruptedException ex) {
+-        ex.printStackTrace();
+-      }
+-    }
+     if (this.completedJobsStoreThread != null &&
+         this.completedJobsStoreThread.isAlive()) {
+       LOG.info("Stopping completedJobsStore thread");
+@@ -889,6 +1387,13 @@
+ 
+     // taskid --> TIP
+     taskidToTIPMap.put(taskid, tip);
++    
++    // Note this launch
++    if (taskid.isMap()) {
++      myInstrumentation.launchMap(taskid);
++    } else {
++      myInstrumentation.launchReduce(taskid);
++    }
+   }
+     
+   void removeTaskEntry(TaskAttemptID taskid) {
+@@ -938,7 +1443,8 @@
+     for (TaskInProgress tip : job.getMapTasks()) {
+       for (TaskStatus taskStatus : tip.getTaskStatuses()) {
+         if (taskStatus.getRunState() != TaskStatus.State.RUNNING && 
+-            taskStatus.getRunState() != TaskStatus.State.COMMIT_PENDING) {
++            taskStatus.getRunState() != TaskStatus.State.COMMIT_PENDING &&
++            taskStatus.getRunState() != TaskStatus.State.UNASSIGNED) {
+           markCompletedTaskAttempt(taskStatus.getTaskTracker(), 
+                                    taskStatus.getTaskID());
+         }
+@@ -947,7 +1453,8 @@
+     for (TaskInProgress tip : job.getReduceTasks()) {
+       for (TaskStatus taskStatus : tip.getTaskStatuses()) {
+         if (taskStatus.getRunState() != TaskStatus.State.RUNNING &&
+-            taskStatus.getRunState() != TaskStatus.State.COMMIT_PENDING) {
++            taskStatus.getRunState() != TaskStatus.State.COMMIT_PENDING &&
++            taskStatus.getRunState() != TaskStatus.State.UNASSIGNED) {
+           markCompletedTaskAttempt(taskStatus.getTaskTracker(), 
+                                    taskStatus.getTaskID());
+         }
+@@ -1019,67 +1526,82 @@
+     
+     JobEndNotifier.registerNotification(job.getJobConf(), job.getStatus());
+ 
++    // start the merge of log files
++    JobID id = job.getStatus().getJobID();
++    try {
++      JobHistory.JobInfo.finalizeRecovery(id, job.getJobConf());
++    } catch (IOException ioe) {
++      LOG.info("Failed to finalize the log file recovery for job " + id, ioe);
++    }
++
++    long now = System.currentTimeMillis();
++    
+     // Purge oldest jobs and keep at-most MAX_COMPLETE_USER_JOBS_IN_MEMORY jobs of a given user
+     // in memory; information about the purged jobs is available via
+     // JobHistory.
+     synchronized (jobs) {
+-      synchronized (jobsByPriority) {
+-        synchronized (jobInitQueue) {
+-          synchronized (userToJobsMap) {
+-            String jobUser = job.getProfile().getUser();
+-            if (!userToJobsMap.containsKey(jobUser)) {
+-              userToJobsMap.put(jobUser, 
+-                                new ArrayList<JobInProgress>());
+-            }
+-            ArrayList<JobInProgress> userJobs = 
+-              userToJobsMap.get(jobUser);
+-            synchronized (userJobs) {
+-              // Add the currently completed 'job'
+-              userJobs.add(job);
+-
+-              // Check if we need to retire some jobs of this user
+-              while (userJobs.size() > 
+-                     MAX_COMPLETE_USER_JOBS_IN_MEMORY) {
+-                JobInProgress rjob = userJobs.get(0);
++      synchronized (taskScheduler) {
++        synchronized (userToJobsMap) {
++          String jobUser = job.getProfile().getUser();
++          if (!userToJobsMap.containsKey(jobUser)) {
++            userToJobsMap.put(jobUser, 
++                              new ArrayList<JobInProgress>());
++          }
++          ArrayList<JobInProgress> userJobs = 
++            userToJobsMap.get(jobUser);
++          synchronized (userJobs) {
++            // Add the currently completed 'job'
++            userJobs.add(job);
++
++            // Check if we need to retire some jobs of this user
++            while (userJobs.size() > 
++                   MAX_COMPLETE_USER_JOBS_IN_MEMORY) {
++              JobInProgress rjob = userJobs.get(0);
++                
++              // Do not delete 'current'
++              // finished job just yet.
++              if (rjob == job) {
++                break;
++              }
++
++              // do not retire jobs that finished in the very recent past.
++              if (rjob.getFinishTime() + MIN_TIME_BEFORE_RETIRE > now) {
++                break;
++              }
++                
++              // Cleanup all datastructures
++              int rjobRunState = 
++                rjob.getStatus().getRunState();
++              if (rjobRunState == JobStatus.SUCCEEDED || 
++                  rjobRunState == JobStatus.FAILED ||
++                  rjobRunState == JobStatus.KILLED) {
++                // Ok, this call to removeTaskEntries
++                // is dangerous is some very very obscure
++                // cases; e.g. when rjob completed, hit
++                // MAX_COMPLETE_USER_JOBS_IN_MEMORY job
++                // limit and yet some task (taskid)
++                // wasn't complete!
++                removeJobTasks(rjob);
+                   
+-                // Do not delete 'current'
+-                // finished job just yet.
+-                if (rjob == job) {
+-                  break;
++                userJobs.remove(0);
++                jobs.remove(rjob.getProfile().getJobID());
++                for (JobInProgressListener listener : jobInProgressListeners) {
++                  listener.jobRemoved(rjob);
+                 }
+                   
+-                // Cleanup all datastructures
+-                int rjobRunState = 
+-                  rjob.getStatus().getRunState();
+-                if (rjobRunState == JobStatus.SUCCEEDED || 
+-                    rjobRunState == JobStatus.FAILED) {
+-                  // Ok, this call to removeTaskEntries
+-                  // is dangerous is some very very obscure
+-                  // cases; e.g. when rjob completed, hit
+-                  // MAX_COMPLETE_USER_JOBS_IN_MEMORY job
+-                  // limit and yet some task (taskid)
+-                  // wasn't complete!
+-                  removeJobTasks(rjob);
+-                    
+-                  userJobs.remove(0);
+-                  jobs.remove(rjob.getProfile().getJobID());
+-                  jobInitQueue.remove(rjob);
+-                  jobsByPriority.remove(rjob);
+-                    
+-                  LOG.info("Retired job with id: '" + 
+-                           rjob.getProfile().getJobID() + "' of user: '" +
+-                           jobUser + "'");
+-                } else {
+-                  // Do not remove jobs that aren't complete.
+-                  // Stop here, and let the next pass take
+-                  // care of purging jobs.
+-                  break;
+-                }
++                LOG.info("Retired job with id: '" + 
++                         rjob.getProfile().getJobID() + "' of user: '" +
++                         jobUser + "'");
++              } else {
++                // Do not remove jobs that aren't complete.
++                // Stop here, and let the next pass take
++                // care of purging jobs.
++                break;
+               }
+             }
+-            if (userJobs.isEmpty()) {
+-              userToJobsMap.remove(jobUser);
+-            }
++          }
++          if (userJobs.isEmpty()) {
++            userToJobsMap.remove(jobUser);
+           }
+         }
+       }
+@@ -1139,7 +1661,8 @@
+     for (Iterator it = jobs.values().iterator(); it.hasNext();) {
+       JobInProgress jip = (JobInProgress) it.next();
+       JobStatus status = jip.getStatus();
+-      if (status.getRunState() == JobStatus.FAILED) {
++      if ((status.getRunState() == JobStatus.FAILED)
++          || (status.getRunState() == JobStatus.KILLED)) {
+         v.add(jip);
+       }
+     }
+@@ -1156,7 +1679,7 @@
+     }
+     return v;
+   }
+-  public Collection taskTrackers() {
++  public Collection<TaskTrackerStatus> taskTrackers() {
+     synchronized (taskTrackers) {
+       return taskTrackers.values();
+     }
+@@ -1167,6 +1690,21 @@
+     }
+   }
+ 
++  /**
++   * Adds a new node to the jobtracker. It involves adding it to the expiry
++   * thread and adding it for resolution
++   * @param status Task Tracker's status
++   * @param resolveInline Should the resolution happen inline?
++   */
++  private void addNewTracker(TaskTrackerStatus status) {
++    trackerExpiryQueue.add(status);
++    //  Register the tracker if its not registered
++    if (getNode(status.getTrackerName()) == null) {
++      // Making the network location resolution inline .. 
++      resolveAndAddToTopology(status.getHost());
++    }
++  }
++
+   public Node resolveAndAddToTopology(String name) {
+     List <String> tmpList = new ArrayList<String>(1);
+     tmpList.add(name);
+@@ -1226,6 +1764,33 @@
+   public int getNumResolvedTaskTrackers() {
+     return numResolved;
+   }
++  
++  public int getNumberOfUniqueHosts() {
++    return uniqueHostsMap.size();
++  }
++  
++  public void addJobInProgressListener(JobInProgressListener listener) {
++    jobInProgressListeners.add(listener);
++  }
++
++  public void removeJobInProgressListener(JobInProgressListener listener) {
++    jobInProgressListeners.remove(listener);
++  }
++  
++  // Update the listeners about the job
++  private void updateJobInProgressListeners(JobChangeEvent event) {
++    for (JobInProgressListener listener : jobInProgressListeners) {
++      listener.jobUpdated(event);
++    }
++  }
++  
++  /**
++   * Return the {@link QueueManager} associated with the JobTracker.
++   */
++  public QueueManager getQueueManager() {
++    return queueManager;
++  }
++  
+   ////////////////////////////////////////////////////
+   // InterTrackerProtocol
+   ////////////////////////////////////////////////////
+@@ -1260,6 +1825,7 @@
+     
+     HeartbeatResponse prevHeartbeatResponse =
+       trackerToHeartbeatResponseMap.get(trackerName);
++    boolean addRestartInfo = false;
+ 
+     if (initialContact != true) {
+       // If this isn't the 'initial contact' from the tasktracker,
+@@ -1267,23 +1833,31 @@
+       // no record of the 'previous heartbeat'; if so, ask the 
+       // tasktracker to re-initialize itself.
+       if (prevHeartbeatResponse == null) {
+-        LOG.warn("Serious problem, cannot find record of 'previous' " +
+-                 "heartbeat for '" + trackerName + 
+-                 "'; reinitializing the tasktracker");
+-        return new HeartbeatResponse(responseId, 
+-                                     new TaskTrackerAction[] {new ReinitTrackerAction()});
++        // This is the first heartbeat from the old tracker to the newly 
++        // started JobTracker
++        if (hasRestarted()) {
++          addRestartInfo = true;
++        } else {
++          // Jobtracker might have restarted but no recovery is needed
++          LOG.warn("Serious problem, cannot find record of 'previous' " +
++                   "heartbeat for '" + trackerName + 
++                   "'; reinitializing the tasktracker");
++          return new HeartbeatResponse(responseId, 
++              new TaskTrackerAction[] {new ReinitTrackerAction()});
++        }
+ 
+-      }
++      } else {
+                 
+-      // It is completely safe to not process a 'duplicate' heartbeat from a 
+-      // {@link TaskTracker} since it resends the heartbeat when rpcs are lost - 
+-      // @see {@link TaskTracker.transmitHeartbeat()};
+-      // acknowledge it by re-sending the previous response to let the 
+-      // {@link TaskTracker} go forward. 
+-      if (prevHeartbeatResponse.getResponseId() != responseId) {
+-        LOG.info("Ignoring 'duplicate' heartbeat from '" + 
+-                 trackerName + "'; resending the previous 'lost' response");
+-        return prevHeartbeatResponse;
++        // It is completely safe to not process a 'duplicate' heartbeat from a 
++        // {@link TaskTracker} since it resends the heartbeat when rpcs are 
++        // lost see {@link TaskTracker.transmitHeartbeat()};
++        // acknowledge it by re-sending the previous response to let the 
++        // {@link TaskTracker} go forward. 
++        if (prevHeartbeatResponse.getResponseId() != responseId) {
++          LOG.info("Ignoring 'duplicate' heartbeat from '" + 
++              trackerName + "'; resending the previous 'lost' response");
++          return prevHeartbeatResponse;
++        }
+       }
+     }
+       
+@@ -1304,10 +1878,21 @@
+       
+     // Check for new tasks to be executed on the tasktracker
+     if (acceptNewTasks) {
+-      Task task = getNewTaskForTaskTracker(trackerName);
+-      if (task != null) {
+-        LOG.debug(trackerName + " -> LaunchTask: " + task.getTaskID());
+-        actions.add(new LaunchTaskAction(task));
++      TaskTrackerStatus taskTrackerStatus = getTaskTracker(trackerName);
++      if (taskTrackerStatus == null) {
++        LOG.warn("Unknown task tracker polling; ignoring: " + trackerName);
++      } else {
++        List<Task> tasks = getSetupAndCleanupTasks(taskTrackerStatus);
++        if (tasks == null ) {
++          tasks = taskScheduler.assignTasks(taskTrackerStatus);
++        }
++        if (tasks != null) {
++          for (Task task : tasks) {
++            expireLaunchingTasks.addNewTask(task.getTaskID());
++            LOG.debug(trackerName + " -> LaunchTask: " + task.getTaskID());
++            actions.add(new LaunchTaskAction(task));
++          }
++        }
+       }
+     }
+       
+@@ -1317,11 +1902,22 @@
+       actions.addAll(killTasksList);
+     }
+      
++    // Check for tasks whose outputs can be saved
++    List<TaskTrackerAction> commitTasksList = getTasksToSave(status);
++    if (commitTasksList != null) {
++      actions.addAll(commitTasksList);
++    }
++
+     // calculate next heartbeat interval and put in heartbeat response
+     int nextInterval = getNextHeartbeatInterval();
+     response.setHeartbeatInterval(nextInterval);
+     response.setActions(
+                         actions.toArray(new TaskTrackerAction[actions.size()]));
++    
++    // check if the restart info is req
++    if (addRestartInfo) {
++      response.setLastKnownIndices(lastSeenEventMapOnRestart);
++    }
+         
+     // Update the trackerToHeartbeatResponseMap
+     trackerToHeartbeatResponseMap.put(trackerName, response);
+@@ -1337,7 +1933,7 @@
+    * Heartbeat interval is incremented 1second for every 50 nodes. 
+    * @return next heartbeat interval.
+    */
+-  private int getNextHeartbeatInterval() {
++  public int getNextHeartbeatInterval() {
+     // get the no of task trackers
+     int clusterSize = getClusterStatus().getTaskTrackers();
+     int heartbeatInterval =  Math.max(
+@@ -1452,8 +2048,7 @@
+         }
+ 
+         if (initialContact) {
+-          trackerExpiryQueue.add(trackerStatus);
+-          resThread.addToResolutionQueue(trackerStatus);
++          addNewTracker(trackerStatus);
+         }
+       }
+     }
+@@ -1463,214 +2058,6 @@
+     return true;
+   }
+ 
+-  private class ResolutionThread extends Thread {
+-    private LinkedBlockingQueue<TaskTrackerStatus> queue = 
+-      new LinkedBlockingQueue <TaskTrackerStatus>();
+-    public ResolutionThread() {
+-      setName("DNSToSwitchMapping reolution Thread");
+-      setDaemon(true);
+-    }
+-    public void addToResolutionQueue(TaskTrackerStatus t) {
+-      while (!queue.add(t)) {
+-        LOG.warn("Couldn't add to the Resolution queue now. Will " +
+-                 "try again");
+-        try {
+-          Thread.sleep(2000);
+-        } catch (InterruptedException ie) {}
+-      }
+-    }
+-    @Override
+-    public void run() {
+-      while (!isInterrupted()) {
+-        try {
+-          List <TaskTrackerStatus> statuses = 
+-            new ArrayList<TaskTrackerStatus>(queue.size());
+-          // Block if the queue is empty
+-          statuses.add(queue.take());
+-          queue.drainTo(statuses);
+-          List<String> dnHosts = new ArrayList<String>(statuses.size());
+-          for (TaskTrackerStatus t : statuses) {
+-            dnHosts.add(t.getHost());
+-          }
+-          List<String> rName = dnsToSwitchMapping.resolve(dnHosts);
+-          if (rName == null) {
+-            LOG.error("The resolve call returned null! Using " + 
+-                NetworkTopology.DEFAULT_RACK + " for some hosts");
+-            rName = new ArrayList<String>(dnHosts.size());
+-            for (int i = 0; i < dnHosts.size(); i++) {
+-              rName.add(NetworkTopology.DEFAULT_RACK);
+-            }
+-          }
+-          int i = 0;
+-          for (String m : rName) {
+-            String host = statuses.get(i++).getHost();
+-            String networkLoc = NodeBase.normalize(m);
+-            addHostToNodeMapping(host, networkLoc);
+-            numResolved++;
+-          }
+-        } catch (InterruptedException ie) {
+-          LOG.warn(getName() + " exiting, got interrupted: " + 
+-                   StringUtils.stringifyException(ie));
+-          return;
+-        } catch (Throwable t) {
+-          LOG.error(getName() + " got an exception: " +
+-              StringUtils.stringifyException(t));
+-        }
+-      }
+-      LOG.warn(getName() + " exiting...");
+-    }
+-  }
+-  
+-  /**
+-   * Returns a task we'd like the TaskTracker to execute right now.
+-   *
+-   * Eventually this function should compute load on the various TaskTrackers,
+-   * and incorporate knowledge of DFS file placement.  But for right now, it
+-   * just grabs a single item out of the pending task list and hands it back.
+-   */
+-  private synchronized Task getNewTaskForTaskTracker(String taskTracker
+-                                                     ) throws IOException {
+-    //
+-    // Compute average map and reduce task numbers across pool
+-    //
+-    int remainingReduceLoad = 0;
+-    int remainingMapLoad = 0;
+-    int numTaskTrackers;
+-    TaskTrackerStatus tts;
+-
+-    synchronized (taskTrackers) {
+-      numTaskTrackers = taskTrackers.size();
+-      tts = taskTrackers.get(taskTracker);
+-    }
+-    if (tts == null) {
+-      LOG.warn("Unknown task tracker polling; ignoring: " + taskTracker);
+-      return null;
+-    }
+-
+-    synchronized(jobsByPriority){
+-      for (Iterator it = jobsByPriority.iterator(); it.hasNext();) {
+-        JobInProgress job = (JobInProgress) it.next();
+-        if (job.getStatus().getRunState() == JobStatus.RUNNING) {
+-          int totalMapTasks = job.desiredMaps();
+-          int totalReduceTasks = job.desiredReduces();
+-          remainingMapLoad += (totalMapTasks - job.finishedMaps());
+-          remainingReduceLoad += (totalReduceTasks - job.finishedReduces());
+-        }
+-      }   
+-    }
+-
+-    int maxCurrentMapTasks = tts.getMaxMapTasks();
+-    int maxCurrentReduceTasks = tts.getMaxReduceTasks();
+-    // find out the maximum number of maps or reduces that we are willing
+-    // to run on any node.
+-    int maxMapLoad = 0;
+-    int maxReduceLoad = 0;
+-    if (numTaskTrackers > 0) {
+-      maxMapLoad = Math.min(maxCurrentMapTasks,
+-                            (int) Math.ceil((double) remainingMapLoad / 
+-                                            numTaskTrackers));
+-      maxReduceLoad = Math.min(maxCurrentReduceTasks,
+-                               (int) Math.ceil((double) remainingReduceLoad
+-                                               / numTaskTrackers));
+-    }
+-        
+-    //
+-    // Get map + reduce counts for the current tracker.
+-    //
+-
+-    int numMaps = tts.countMapTasks();
+-    int numReduces = tts.countReduceTasks();
+-
+-    //
+-    // In the below steps, we allocate first a map task (if appropriate),
+-    // and then a reduce task if appropriate.  We go through all jobs
+-    // in order of job arrival; jobs only get serviced if their 
+-    // predecessors are serviced, too.
+-    //
+-
+-    //
+-    // We hand a task to the current taskTracker if the given machine 
+-    // has a workload that's less than the maximum load of that kind of
+-    // task.
+-    //
+-       
+-    synchronized (jobsByPriority) {
+-      if (numMaps < maxMapLoad) {
+-
+-        int totalNeededMaps = 0;
+-        for (Iterator it = jobsByPriority.iterator(); it.hasNext();) {
+-          JobInProgress job = (JobInProgress) it.next();
+-          if (job.getStatus().getRunState() != JobStatus.RUNNING) {
+-            continue;
+-          }
+-
+-          Task t = job.obtainNewMapTask(tts, numTaskTrackers,
+-                                        uniqueHostsMap.size());
+-          if (t != null) {
+-            expireLaunchingTasks.addNewTask(t.getTaskID());
+-            myMetrics.launchMap();
+-            return t;
+-          }
+-
+-          //
+-          // Beyond the highest-priority task, reserve a little 
+-          // room for failures and speculative executions; don't 
+-          // schedule tasks to the hilt.
+-          //
+-          totalNeededMaps += job.desiredMaps();
+-          int padding = 0;
+-          if (numTaskTrackers > MIN_CLUSTER_SIZE_FOR_PADDING) {
+-            padding = Math.min(maxCurrentMapTasks,
+-                               (int)(totalNeededMaps * PAD_FRACTION));
+-          }
+-          if (totalMaps + padding >= totalMapTaskCapacity) {
+-            break;
+-          }
+-        }
+-      }
+-
+-      //
+-      // Same thing, but for reduce tasks
+-      //
+-      if (numReduces < maxReduceLoad) {
+-
+-        int totalNeededReduces = 0;
+-        for (Iterator it = jobsByPriority.iterator(); it.hasNext();) {
+-          JobInProgress job = (JobInProgress) it.next();
+-          if (job.getStatus().getRunState() != JobStatus.RUNNING ||
+-              job.numReduceTasks == 0) {
+-            continue;
+-          }
+-
+-          Task t = job.obtainNewReduceTask(tts, numTaskTrackers, 
+-                                           uniqueHostsMap.size());
+-          if (t != null) {
+-            expireLaunchingTasks.addNewTask(t.getTaskID());
+-            myMetrics.launchReduce();
+-            return t;
+-          }
+-
+-          //
+-          // Beyond the highest-priority task, reserve a little 
+-          // room for failures and speculative executions; don't 
+-          // schedule tasks to the hilt.
+-          //
+-          totalNeededReduces += job.desiredReduces();
+-          int padding = 0;
+-          if (numTaskTrackers > MIN_CLUSTER_SIZE_FOR_PADDING) {
+-            padding = 
+-              Math.min(maxCurrentReduceTasks,
+-                       (int) (totalNeededReduces * PAD_FRACTION));
+-          }
+-          if (totalReduces + padding >= totalReduceTaskCapacity) {
+-            break;
+-          }
+-        }
+-      }
+-    }
+-    return null;
+-  }
+-
+   /**
+    * A tracker wants to know if any of its Tasks have been
+    * closed (because the job completed, whether successfully or not)
+@@ -1690,7 +2077,8 @@
+           // It may be successfully completed, or may be killed in
+           // mid-execution.
+           //
+-          if (tip.getJob().getStatus().getRunState() == JobStatus.RUNNING) {
++          if (tip.getJob().getStatus().getRunState() == JobStatus.RUNNING ||
++              tip.getJob().getStatus().getRunState() == JobStatus.PREP) {
+             killList.add(new KillTaskAction(killTaskId));
+             LOG.debug(taskTracker + " -> KillTaskAction: " + killTaskId);
+           } else {
+@@ -1711,6 +2099,86 @@
+   }
+ 
+   /**
++   * A tracker wants to know if any of its Tasks can be committed 
++   */
++  private synchronized List<TaskTrackerAction> getTasksToSave(
++                                                 TaskTrackerStatus tts) {
++    List<TaskStatus> taskStatuses = tts.getTaskReports();
++    if (taskStatuses != null) {
++      List<TaskTrackerAction> saveList = new ArrayList<TaskTrackerAction>();
++      for (TaskStatus taskStatus : taskStatuses) {
++        if (taskStatus.getRunState() == TaskStatus.State.COMMIT_PENDING) {
++          TaskAttemptID taskId = taskStatus.getTaskID();
++          TaskInProgress tip = taskidToTIPMap.get(taskId);
++          if (tip.shouldCommit(taskId)) {
++            saveList.add(new CommitTaskAction(taskId));
++            LOG.debug(tts.getTrackerName() + 
++                      " -> CommitTaskAction: " + taskId);
++          }
++        }
++      }
++      return saveList;
++    }
++    return null;
++  }
++  
++  // returns cleanup tasks first, then setup tasks.
++  private synchronized List<Task> getSetupAndCleanupTasks(
++    TaskTrackerStatus taskTracker) throws IOException {
++    int maxMapTasks = taskTracker.getMaxMapTasks();
++    int maxReduceTasks = taskTracker.getMaxReduceTasks();
++    int numMaps = taskTracker.countMapTasks();
++    int numReduces = taskTracker.countReduceTasks();
++    int numTaskTrackers = getClusterStatus().getTaskTrackers();
++    int numUniqueHosts = getNumberOfUniqueHosts();
++
++    Task t = null;
++    synchronized (jobs) {
++      if (numMaps < maxMapTasks) {
++        for (Iterator<JobInProgress> it = jobs.values().iterator();
++             it.hasNext();) {
++          JobInProgress job = it.next();
++          t = job.obtainCleanupTask(taskTracker, numTaskTrackers,
++                                    numUniqueHosts, true);
++          if (t != null) {
++            return Collections.singletonList(t);
++          }
++        }
++        for (Iterator<JobInProgress> it = jobs.values().iterator();
++             it.hasNext();) {
++          JobInProgress job = it.next();
++          t = job.obtainSetupTask(taskTracker, numTaskTrackers,
++                                  numUniqueHosts, true);
++          if (t != null) {
++            return Collections.singletonList(t);
++          }
++        }
++      }
++      if (numReduces < maxReduceTasks) {
++        for (Iterator<JobInProgress> it = jobs.values().iterator();
++             it.hasNext();) {
++          JobInProgress job = it.next();
++          t = job.obtainCleanupTask(taskTracker, numTaskTrackers,
++                                    numUniqueHosts, false);
++          if (t != null) {
++            return Collections.singletonList(t);
++          }
++        }
++        for (Iterator<JobInProgress> it = jobs.values().iterator();
++             it.hasNext();) {
++          JobInProgress job = it.next();
++          t = job.obtainSetupTask(taskTracker, numTaskTrackers,
++                                    numUniqueHosts, false);
++          if (t != null) {
++            return Collections.singletonList(t);
++          }
++        }
++      }
++    }
++    return null;
++  }
++
++  /**
+    * Grab the local fs name
+    */
+   public synchronized String getFilesystemName() throws IOException {
+@@ -1739,27 +2207,12 @@
+   ////////////////////////////////////////////////////
+ 
+   /**
+-   * Make sure the JobTracker is done initializing.
+-   */
+-  private synchronized void ensureRunning() throws IllegalStateException {
+-    if (state != State.RUNNING) {
+-      throw new IllegalStateException("Job tracker still initializing");
+-    }
+-  }
+-
+-  /**
+    * Allocates a new JobId string.
+    */
+   public synchronized JobID getNewJobId() throws IOException {
+-    ensureRunning();
+     return new JobID(getTrackerIdentifier(), nextJobId++);
+   }
+ 
+-  @Deprecated
+-  public JobStatus submitJob(String jobid) throws IOException {
+-    return submitJob(JobID.forName(jobid));
+-  }
+-
+   /**
+    * JobTracker.submitJob() kicks off a new job.  
+    *
+@@ -1767,58 +2220,56 @@
+    * and JobStatus.  Those two sub-objects are sometimes shipped outside
+    * of the JobTracker.  But JobInProgress adds info that's useful for
+    * the JobTracker alone.
+-   *
+-   * We add the JIP to the jobInitQueue, which is processed 
+-   * asynchronously to handle split-computation and build up
+-   * the right TaskTracker/Block mapping.
+    */
+   public synchronized JobStatus submitJob(JobID jobId) throws IOException {
+-    ensureRunning();
+     if(jobs.containsKey(jobId)) {
+       //job already running, don't start twice
+       return jobs.get(jobId).getStatus();
+     }
+     
+-    totalSubmissions++;
+     JobInProgress job = new JobInProgress(jobId, this, this.conf);
+-    synchronized (jobs) {
+-      synchronized (jobsByPriority) {
+-        synchronized (jobInitQueue) {
+-          jobs.put(job.getProfile().getJobID(), job);
+-          jobsByPriority.add(job);
+-          jobInitQueue.add(job);
+-          resortPriority();
+-          jobInitQueue.notifyAll();
+-        }
+-      }
+-    }
+-    myMetrics.submitJob();
+-    return job.getStatus();
++   return addJob(jobId, job); 
+   }
+ 
+   /**
+-   * Sort jobs by priority and then by start time.
++   * Adds a job to the jobtracker. Make sure that the checks are inplace before
++   * adding a job. This is the core job submission logic
++   * @param jobId The id for the job submitted which needs to be added
+    */
+-  private synchronized void resortPriority() {
+-    Comparator<JobInProgress> comp = new Comparator<JobInProgress>() {
+-      public int compare(JobInProgress o1, JobInProgress o2) {
+-        int res = o1.getPriority().compareTo(o2.getPriority());
+-        if(res == 0) {
+-          if(o1.getStartTime() < o2.getStartTime())
+-            res = -1;
+-          else
+-            res = (o1.getStartTime()==o2.getStartTime() ? 0 : 1);
++  private synchronized JobStatus addJob(JobID jobId, JobInProgress job) 
++  throws IOException {
++    totalSubmissions++;
++    checkAccess(job, QueueManager.QueueOperation.SUBMIT_JOB);
++
++    synchronized (jobs) {
++      synchronized (taskScheduler) {
++        jobs.put(job.getProfile().getJobID(), job);
++        for (JobInProgressListener listener : jobInProgressListeners) {
++          listener.jobAdded(job);
+         }
+-          
+-        return res;
+       }
+-    };
+-    
+-    synchronized(jobsByPriority) {
+-      Collections.sort(jobsByPriority, comp);
+     }
+-    synchronized (jobInitQueue) {
+-      Collections.sort(jobInitQueue, comp);
++    myInstrumentation.submitJob(this.conf, jobId);
++    return job.getStatus();
++  }
++
++  // Check whether the specified operation can be performed
++  // related to the job. If ownerAllowed is true, then an owner
++  // of the job can perform the operation irrespective of
++  // access control.
++  private void checkAccess(JobInProgress job, 
++                                QueueManager.QueueOperation oper) 
++                                  throws IOException {
++    // get the user group info
++    UserGroupInformation ugi = UserGroupInformation.getCurrentUGI();
++
++    // get the queue
++    String queue = job.getProfile().getQueueName();
++    if (!queueManager.hasAccess(queue, job, oper, ugi)) {
++      throw new AccessControlException("User " 
++                            + ugi.getUserName() 
++                            + " cannot perform "
++                            + "operation " + oper + " on queue " + queue);
+     }
+   }
+ 
+@@ -1832,22 +2283,43 @@
+                                state);          
+     }
+   }
+-
+-  @Deprecated
+-  public void killJob(String id) {
+-    killJob(JobID.forName(id));
+-  }
+-
+-  public synchronized void killJob(JobID jobid) {
++    
++  public synchronized void killJob(JobID jobid) throws IOException {
+     JobInProgress job = jobs.get(jobid);
++    JobStatus prevStatus = (JobStatus)job.getStatus().clone();
++    checkAccess(job, QueueManager.QueueOperation.ADMINISTER_JOBS);
+     job.kill();
++    
++    // Inform the listeners if the job is killed
++    // Note : 
++    //   If the job is killed in the PREP state then the listeners will be 
++    //   invoked
++    //   If the job is killed in the RUNNING state then cleanup tasks will be 
++    //   launched and the updateTaskStatuses() will take care of it
++    JobStatus newStatus = (JobStatus)job.getStatus().clone();
++    if (prevStatus.getRunState() != newStatus.getRunState()
++        && newStatus.getRunState() == JobStatus.KILLED) {
++      JobStatusChangeEvent event = 
++        new JobStatusChangeEvent(job, EventType.RUN_STATE_CHANGED, prevStatus, 
++            newStatus);
++      updateJobInProgressListeners(event);
++    }
+   }
+ 
+-  @Deprecated
+-  public JobProfile getJobProfile(String id) {
+-    return getJobProfile(JobID.forName(id));
++  /**
++   * Set the priority of a job
++   * @param jobid id of the job
++   * @param priority new priority of the job
++   */
++  public synchronized void setJobPriority(JobID jobid, 
++                                              String priority)
++                                                throws IOException {
++    JobInProgress job = jobs.get(jobid);
++    checkAccess(job, QueueManager.QueueOperation.ADMINISTER_JOBS);
++    JobPriority newPriority = JobPriority.valueOf(priority);
++    setJobPriority(jobid, newPriority);
+   }
+-
++                           
+   public synchronized JobProfile getJobProfile(JobID jobid) {
+     JobInProgress job = jobs.get(jobid);
+     if (job != null) {
+@@ -1856,12 +2328,6 @@
+       return completedJobStatusStore.readJobProfile(jobid);
+     }
+   }
+-  
+-  @Deprecated
+-  public JobStatus getJobStatus(String id) {
+-    return getJobStatus(JobID.forName(id));
+-  }
+-
+   public synchronized JobStatus getJobStatus(JobID jobid) {
+     JobInProgress job = jobs.get(jobid);
+     if (job != null) {
+@@ -1870,12 +2336,6 @@
+       return completedJobStatusStore.readJobStatus(jobid);
+     }
+   }
+-
+-  @Deprecated
+-  public Counters getJobCounters(String id) {
+-    return getJobCounters(JobID.forName(id));
+-  }
+-
+   public synchronized Counters getJobCounters(JobID jobid) {
+     JobInProgress job = jobs.get(jobid);
+     if (job != null) {
+@@ -1884,12 +2344,6 @@
+       return completedJobStatusStore.readCounters(jobid);
+     }
+   }
+-  
+-  @Deprecated
+-  public TaskReport[] getMapTaskReports(String jobid) {
+-    return getMapTaskReports(JobID.forName(jobid));
+-  }
+-
+   public synchronized TaskReport[] getMapTaskReports(JobID jobid) {
+     JobInProgress job = jobs.get(jobid);
+     if (job == null) {
+@@ -1912,11 +2366,6 @@
+     }
+   }
+ 
+-  @Deprecated
+-  public TaskReport[] getReduceTaskReports(String jobid) {
+-    return getReduceTaskReports(JobID.forName(jobid));
+-  }
+-
+   public synchronized TaskReport[] getReduceTaskReports(JobID jobid) {
+     JobInProgress job = jobs.get(jobid);
+     if (job == null) {
+@@ -1937,13 +2386,53 @@
+     }
+   }
+ 
+-  @Deprecated
+-  public TaskCompletionEvent[] getTaskCompletionEvents(String jobid, int fromid, 
+-                                                       int maxevents
+-                                                      ) throws IOException {
+-    return getTaskCompletionEvents(JobID.forName(jobid), fromid, maxevents);
++  public synchronized TaskReport[] getCleanupTaskReports(JobID jobid) {
++    JobInProgress job = jobs.get(jobid);
++    if (job == null) {
++      return new TaskReport[0];
++    } else {
++      Vector<TaskReport> reports = new Vector<TaskReport>();
++      Vector<TaskInProgress> completeTasks = job.reportCleanupTIPs(true);
++      for (Iterator<TaskInProgress> it = completeTasks.iterator();
++           it.hasNext();) {
++        TaskInProgress tip = (TaskInProgress) it.next();
++        reports.add(tip.generateSingleReport());
++      }
++      Vector<TaskInProgress> incompleteTasks = job.reportCleanupTIPs(false);
++      for (Iterator<TaskInProgress> it = incompleteTasks.iterator(); 
++           it.hasNext();) {
++        TaskInProgress tip = (TaskInProgress) it.next();
++        reports.add(tip.generateSingleReport());
++      }
++      return reports.toArray(new TaskReport[reports.size()]);
++    }
++  
+   }
+-
++  
++  public synchronized TaskReport[] getSetupTaskReports(JobID jobid) {
++    JobInProgress job = jobs.get(jobid);
++    if (job == null) {
++      return new TaskReport[0];
++    } else {
++      Vector<TaskReport> reports = new Vector<TaskReport>();
++      Vector<TaskInProgress> completeTasks = job.reportSetupTIPs(true);
++      for (Iterator<TaskInProgress> it = completeTasks.iterator();
++           it.hasNext();) {
++        TaskInProgress tip = (TaskInProgress) it.next();
++        reports.add(tip.generateSingleReport());
++      }
++      Vector<TaskInProgress> incompleteTasks = job.reportSetupTIPs(false);
++      for (Iterator<TaskInProgress> it = incompleteTasks.iterator(); 
++           it.hasNext();) {
++        TaskInProgress tip = (TaskInProgress) it.next();
++        reports.add(tip.generateSingleReport());
++      }
++      return reports.toArray(new TaskReport[reports.size()]);
++    }
++  }
++  
++  TaskCompletionEvent[] EMPTY_EVENTS = new TaskCompletionEvent[0];
++  
+   /* 
+    * Returns a list of TaskCompletionEvent for the given job, 
+    * starting from fromEventId.
+@@ -1951,11 +2440,13 @@
+    */
+   public synchronized TaskCompletionEvent[] getTaskCompletionEvents(
+       JobID jobid, int fromEventId, int maxEvents) throws IOException{
+-    TaskCompletionEvent[] events;
++    TaskCompletionEvent[] events = EMPTY_EVENTS;
+ 
+     JobInProgress job = this.jobs.get(jobid);
+     if (null != job) {
+-      events = job.getTaskCompletionEvents(fromEventId, maxEvents);
++      if (job.inited()) {
++        events = job.getTaskCompletionEvents(fromEventId, maxEvents);
++      }
+     }
+     else {
+       events = completedJobStatusStore.readJobTaskCompletionEvents(jobid, fromEventId, maxEvents);
+@@ -1963,12 +2454,6 @@
+     return events;
+   }
+ 
+-  @Deprecated
+-  public String[] getTaskDiagnostics(String jobid, String tipid, 
+-                                     String taskid) throws IOException {
+-    return getTaskDiagnostics(TaskAttemptID.forName(taskid));
+-  }
+-
+   /**
+    * Get the diagnostics for a given task
+    * @param taskId the id of the task
+@@ -2013,7 +2498,15 @@
+     TaskInProgress tip = getTip(tipid);
+     return (tip == null ? null : tip.getCounters());
+   }
+-    
++
++  /**
++   * Returns the configured task scheduler for this job tracker.
++   * @return the configured task scheduler
++   */
++  TaskScheduler getTaskScheduler() {
++    return taskScheduler;
++  }
++  
+   /**
+    * Returns specified TaskInProgress, or null.
+    */
+@@ -2021,16 +2514,12 @@
+     JobInProgress job = jobs.get(tipid.getJobID());
+     return (job == null ? null : job.getTaskInProgress(tipid));
+   }
+-
+-  @Deprecated
+-  public boolean killTask(String taskId, boolean shouldFail) throws IOException{
+-    return killTask(TaskAttemptID.forName(taskId), shouldFail);
+-  }
+-
++    
+   /** Mark a Task to be killed */
+   public synchronized boolean killTask(TaskAttemptID taskid, boolean shouldFail) throws IOException{
+     TaskInProgress tip = taskidToTIPMap.get(taskid);
+     if(tip != null) {
++      checkAccess(tip.getJob(), QueueManager.QueueOperation.ADMINISTER_JOBS);
+       return tip.killTask(taskid, shouldFail);
+     }
+     else {
+@@ -2038,12 +2527,7 @@
+       return false;
+     }
+   }
+-
+-  @Deprecated
+-  public String getAssignedTracker(String taskid) {
+-    return getAssignedTracker(TaskAttemptID.forName(taskid));
+-  }
+-
++  
+   /**
+    * Get tracker name for a given task id.
+    * @param taskId the name of the task
+@@ -2054,30 +2538,11 @@
+   }
+     
+   public JobStatus[] jobsToComplete() {
+-    Vector<JobStatus> v = new Vector<JobStatus>();
+-    for (Iterator it = jobs.values().iterator(); it.hasNext();) {
+-      JobInProgress jip = (JobInProgress) it.next();
+-      JobStatus status = jip.getStatus();
+-      if (status.getRunState() == JobStatus.RUNNING 
+-          || status.getRunState() == JobStatus.PREP) {
+-        status.setStartTime(jip.getStartTime());
+-        status.setUsername(jip.getProfile().getUser());
+-        v.add(status);
+-      }
+-    }
+-    return v.toArray(new JobStatus[v.size()]);
++    return getJobStatus(jobs.values(), true);
+   } 
+   
+   public JobStatus[] getAllJobs() {
+-    Vector<JobStatus> v = new Vector<JobStatus>();
+-    for (Iterator it = jobs.values().iterator(); it.hasNext();) {
+-      JobInProgress jip = (JobInProgress) it.next();
+-      JobStatus status = jip.getStatus();
+-      status.setStartTime(jip.getStartTime());
+-      status.setUsername(jip.getProfile().getUser());
+-      v.add(status);
+-    }
+-    return v.toArray(new JobStatus[v.size()]);
++    return getJobStatus(jobs.values(),false);
+   }
+     
+   /**
+@@ -2091,11 +2556,6 @@
+   ///////////////////////////////////////////////////////////////
+   // JobTracker methods
+   ///////////////////////////////////////////////////////////////
+-  @Deprecated
+-  public JobInProgress getJob(String jobid) {
+-    return getJob(JobID.forName(jobid));
+-  }
+-
+   public JobInProgress getJob(JobID jobid) {
+     return jobs.get(jobid);
+   }
+@@ -2108,10 +2568,15 @@
+   synchronized void setJobPriority(JobID jobId, JobPriority priority) {
+     JobInProgress job = jobs.get(jobId);
+     if (job != null) {
+-      job.setPriority(priority);
+-      
+-      // Re-sort jobs to reflect this change
+-      resortPriority();
++      synchronized (taskScheduler) {
++        JobStatus oldStatus = (JobStatus)job.getStatus().clone();
++        job.setPriority(priority);
++        JobStatus newStatus = (JobStatus)job.getStatus().clone();
++        JobStatusChangeEvent event = 
++          new JobStatusChangeEvent(job, EventType.PRIORITY_CHANGED, oldStatus, 
++                                   newStatus);
++        updateJobInProgressListeners(event);
++      }
+     } else {
+       LOG.warn("Trying to change the priority of an unknown job: " + jobId);
+     }
+@@ -2133,11 +2598,31 @@
+       report.setTaskTracker(trackerName);
+       TaskAttemptID taskId = report.getTaskID();
+       TaskInProgress tip = taskidToTIPMap.get(taskId);
+-      if (tip == null) {
+-        LOG.info("Serious problem.  While updating status, cannot find taskid " + report.getTaskID());
+-      } else {
++      // Check if the tip is known to the jobtracker. In case of a restarted
++      // jt, some tasks might join in later
++      if (tip != null || hasRestarted()) {
++        JobInProgress job = getJob(taskId.getJobID());
++        if (tip == null) {
++          tip = job.getTaskInProgress(taskId.getTaskID());
++          job.addRunningTaskToTIP(tip, taskId, status, false);
++        }
+         expireLaunchingTasks.removeTask(taskId);
+-        tip.getJob().updateTaskStatus(tip, report, myMetrics);
++        
++        // Update the job and inform the listeners if necessary
++        JobStatus prevStatus = (JobStatus)job.getStatus().clone();
++        job.updateTaskStatus(tip, report, myInstrumentation);
++        JobStatus newStatus = (JobStatus)job.getStatus().clone();
++        
++        // Update the listeners if an incomplete job completes
++        if (prevStatus.getRunState() != newStatus.getRunState()) {
++          JobStatusChangeEvent event = 
++            new JobStatusChangeEvent(job, EventType.RUN_STATE_CHANGED, 
++                                     prevStatus, newStatus);
++          updateJobInProgressListeners(event);
++        }
++      } else {
++        LOG.info("Serious problem.  While updating status, cannot find taskid " 
++                 + report.getTaskID());
+       }
+       
+       // Process 'failed fetch' notifications 
+@@ -2155,7 +2640,7 @@
+             failedFetchMap.getJob().fetchFailureNotification(failedFetchMap, 
+                                                              mapTaskId, 
+                                                              failedFetchTrackerName, 
+-                                                             myMetrics);
++                                                             myInstrumentation);
+           }
+         }
+       }
+@@ -2184,14 +2669,16 @@
+         // And completed maps with zero reducers of the job 
+         // never need to be failed. 
+         if (!tip.isComplete() || 
+-            (tip.isMapTask() && job.desiredReduces() != 0)) {
++            (tip.isMapTask() && !tip.isSetupTask() && 
++             job.desiredReduces() != 0)) {
+           // if the job is done, we don't want to change anything
+-          if (job.getStatus().getRunState() == JobStatus.RUNNING) {
++          if (job.getStatus().getRunState() == JobStatus.RUNNING ||
++              job.getStatus().getRunState() == JobStatus.PREP) {
+             job.failedTask(tip, taskId, ("Lost task tracker: " + trackerName), 
+                            (tip.isMapTask() ? 
+                                TaskStatus.Phase.MAP : 
+                                TaskStatus.Phase.REDUCE), 
+-                           TaskStatus.State.KILLED, trackerName, myMetrics);
++                           TaskStatus.State.KILLED, trackerName, myInstrumentation);
+             jobsWithFailures.add(job);
+           }
+         } else {
+@@ -2213,190 +2700,7 @@
+       removeMarkedTasks(trackerName);
+     }
+   }
+-
+-  /**
+-   * Add a job's completed task (either successful or failed/killed) to the 
+-   * {@link TaskCommitQueue}. 
+-   * @param j completed task (either successful or failed/killed)
+-   */
+-  void addToCommitQueue(JobInProgress.JobWithTaskContext j) {
+-    ((TaskCommitQueue)taskCommitThread).addToQueue(j);
+-  }
+   
+-  /**
+-   * A thread which does all of the {@link FileSystem}-related operations for
+-   * tasks. It picks the next task in the queue, promotes outputs of 
+-   * {@link TaskStatus.State#SUCCEEDED} tasks & discards outputs for 
+-   * {@link TaskStatus.State#FAILED} or {@link TaskStatus.State#KILLED} tasks.
+-   */
+-  private class TaskCommitQueue extends Thread {
+-    
+-    private LinkedBlockingQueue<JobInProgress.JobWithTaskContext> queue = 
+-            new LinkedBlockingQueue <JobInProgress.JobWithTaskContext>();
+-        
+-    public TaskCommitQueue() {
+-      setName("Task Commit Thread");
+-      setDaemon(true);
+-    }
+-    
+-    public void addToQueue(JobInProgress.JobWithTaskContext j) {
+-      while (true) { // loop until the element gets added
+-        try {
+-          queue.put(j);
+-          return;
+-        } catch (InterruptedException ie) {}
+-      }
+-    }
+-       
+-    @Override
+-    public void run() {
+-      int  batchCommitSize = conf.getInt("jobtracker.task.commit.batch.size", 
+-                                         5000); 
+-      while (!isInterrupted()) {
+-        try {
+-          ArrayList <JobInProgress.JobWithTaskContext> jobList = 
+-            new ArrayList<JobInProgress.JobWithTaskContext>(batchCommitSize);
+-          // Block if the queue is empty
+-          jobList.add(queue.take());  
+-          queue.drainTo(jobList, batchCommitSize);
+-
+-          JobInProgress[] jobs = new JobInProgress[jobList.size()];
+-          TaskInProgress[] tips = new TaskInProgress[jobList.size()];
+-          TaskAttemptID[] taskids = new TaskAttemptID[jobList.size()];
+-          JobTrackerMetrics[] metrics = new JobTrackerMetrics[jobList.size()];
+-
+-          Iterator<JobInProgress.JobWithTaskContext> iter = jobList.iterator();
+-          int count = 0;
+-
+-          while (iter.hasNext()) {
+-            JobInProgress.JobWithTaskContext j = iter.next();
+-            jobs[count] = j.getJob();
+-            tips[count] = j.getTIP();
+-            taskids[count]= j.getTaskID();
+-            metrics[count] = j.getJobTrackerMetrics();
+-            ++count;
+-          }
+-
+-          Task[] tasks = new Task[jobList.size()];
+-          TaskStatus[] status = new TaskStatus[jobList.size()];
+-          boolean[] isTipComplete = new boolean[jobList.size()];
+-          TaskStatus.State[] states = new TaskStatus.State[jobList.size()];
+-
+-          synchronized (JobTracker.this) {
+-            for(int i = 0; i < jobList.size(); ++i) {
+-              synchronized (jobs[i]) {
+-                synchronized (tips[i]) {
+-                  status[i] = tips[i].getTaskStatus(taskids[i]);
+-                  tasks[i] = tips[i].getTask(taskids[i]);
+-                  states[i] = status[i].getRunState();
+-                  isTipComplete[i] = tips[i].isComplete();
+-                }
+-              }
+-            }
+-          }
+-
+-          //For COMMIT_PENDING tasks, we save the task output in the dfs
+-          //as well as manipulate the JT datastructures to reflect a
+-          //successful task. This guarantees that we don't declare a task
+-          //as having succeeded until we have successfully completed the
+-          //dfs operations.
+-          //For failed tasks, we just do the dfs operations here. The
+-          //datastructures updates is done earlier as soon as the failure
+-          //is detected so that the JT can immediately schedule another
+-          //attempt for that task.
+-
+-          Set<TaskID> seenTIPs = new HashSet<TaskID>();
+-          for(int index = 0; index < jobList.size(); ++index) {
+-            try {
+-              if (states[index] == TaskStatus.State.COMMIT_PENDING) {
+-                if (!isTipComplete[index]) {
+-                  if (!seenTIPs.contains(tips[index].getTIPId())) {
+-                    tasks[index].saveTaskOutput();
+-                    seenTIPs.add(tips[index].getTIPId());
+-                  } else {
+-                    // since other task of this tip has saved its output
+-                    isTipComplete[index] = true;
+-                  }
+-                }
+-              }
+-            } catch (IOException ioe) {
+-              // Oops! Failed to copy the task's output to its final place;
+-              // fail the task!
+-              states[index] = TaskStatus.State.FAILED;
+-              synchronized (JobTracker.this) {
+-                String reason = "Failed to rename output with the exception: " 
+-                                + StringUtils.stringifyException(ioe);
+-                TaskStatus.Phase phase = (tips[index].isMapTask() 
+-                                          ? TaskStatus.Phase.MAP 
+-                                          : TaskStatus.Phase.REDUCE);
+-                jobs[index].failedTask(tips[index], status[index].getTaskID(), 
+-                                       reason, phase, TaskStatus.State.FAILED, 
+-                                       status[index].getTaskTracker(), null);
+-              }
+-              LOG.info("Failed to rename the output of " 
+-                       + status[index].getTaskID() + " with " 
+-                       + StringUtils.stringifyException(ioe));
+-            }
+-          }
+-
+-          synchronized (JobTracker.this) {
+-            //do a check for the case where after the task went to
+-            //COMMIT_PENDING, it was lost. So although we would have
+-            //saved the task output, we cannot declare it a SUCCESS.
+-            for(int i = 0; i < jobList.size(); ++i) {
+-              TaskStatus newStatus = null;
+-              if(states[i] == TaskStatus.State.COMMIT_PENDING) {
+-                synchronized (jobs[i]) {
+-                  synchronized (tips[i]) {
+-                    status[i] = tips[i].getTaskStatus(taskids[i]);
+-                    if (!isTipComplete[i]) {
+-                      if (status[i].getRunState() 
+-                          != TaskStatus.State.COMMIT_PENDING) {
+-                        states[i] = TaskStatus.State.KILLED;
+-                      } else {
+-                        states[i] = TaskStatus.State.SUCCEEDED;
+-                      }
+-                    } else {
+-                      tips[i].addDiagnosticInfo(tasks[i].getTaskID(), 
+-                                                "Already completed  TIP");
+-                      states[i] = TaskStatus.State.KILLED;
+-                    }
+-                    //create new status if required. If the state changed 
+-                    //from COMMIT_PENDING to KILLED in the JobTracker, while 
+-                    //we were saving the output,the JT would have called 
+-                    //updateTaskStatus and we don't need to call it again
+-                    newStatus = (TaskStatus)status[i].clone();
+-                    newStatus.setRunState(states[i]);
+-                    newStatus.setProgress(
+-                        (states[i] == TaskStatus.State.SUCCEEDED) 
+-                        ? 1.0f 
+-                        : 0.0f);
+-                  }
+-                  if (newStatus != null) {
+-                    jobs[i].updateTaskStatus(tips[i], newStatus, metrics[i]);
+-                  }
+-                }
+-              }
+-            }
+-          }
+-        } catch (InterruptedException ie) {
+-          break;
+-        }
+-        catch (Throwable t) {
+-          LOG.error(getName() + " got an exception: " +
+-                    StringUtils.stringifyException(t));
+-        }
+-      }
+-      
+-      LOG.warn(getName() + " exiting..."); 
+-    }
+-  }
+-  
+-
+-  @Deprecated
+-  public String getLocalJobFilePath(String jobid) {
+-    return getLocalJobFilePath(JobID.forName(jobid));
+-  }
+ 
+   /**
+    * Get the localized job file path on the job trackers local file system
+@@ -2431,4 +2735,51 @@
+     }
+   }
+ 
++  @Override
++  public JobQueueInfo[] getQueues() throws IOException {
++    return queueManager.getJobQueueInfos();
++  }
++
++
++  @Override
++  public JobQueueInfo getQueueInfo(String queue) throws IOException {
++    return queueManager.getJobQueueInfo(queue);
++  }
++
++  @Override
++  public JobStatus[] getJobsFromQueue(String queue) throws IOException {
++    Collection<JobInProgress> jips = taskScheduler.getJobs(queue);
++    return getJobStatus(jips,false);
++  }
++  
++  private synchronized JobStatus[] getJobStatus(Collection<JobInProgress> jips,
++      boolean toComplete) {
++    if(jips == null || jips.isEmpty()) {
++      return new JobStatus[]{};
++    }
++    ArrayList<JobStatus> jobStatusList = new ArrayList<JobStatus>();
++    for(JobInProgress jip : jips) {
++      JobStatus status = jip.getStatus();
++      status.setStartTime(jip.getStartTime());
++      status.setUsername(jip.getProfile().getUser());
++      if(toComplete) {
++        if(status.getRunState() == JobStatus.RUNNING || 
++            status.getRunState() == JobStatus.PREP) {
++          jobStatusList.add(status);
++        }
++      }else {
++        jobStatusList.add(status);
++      }
++    }
++    return (JobStatus[]) jobStatusList.toArray(
++        new JobStatus[jobStatusList.size()]);
++  }
++
++  /**
++   * Returns the confgiured maximum number of tasks for a single job
++   */
++  int getMaxTasksPerJob() {
++    return conf.getInt("mapred.jobtracker.maxtasks.per.job", -1);
++  }
++  
+ }

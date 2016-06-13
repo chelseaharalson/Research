@@ -1,0 +1,35 @@
+--- SynchronizedRGB_old.java	2015-11-09 16:14:03.452455000 -0500
++++ SynchronizedRGB_n.java	2015-11-09 18:22:36.337052000 -0500
+@@ -54,12 +54,32 @@
+     blue = 255 - blue;
+     name = "Inverse of " + name;
+   }
++  
++  public void startNewTask() {
++    SynchronizedRGB tip = new SynchronizedRGB(this.red, this.green, this.blue, this.name);
++    synchronized (tip) {
++      try {
++        tip.invert();
++      } catch (Throwable ie) {
++      }
++    }
++  }
+ 
+   
+   public class SyncTest {
+     SynchronizedRGB sr;
+     void cleanup() {
+       int taskId = sr.getRGB();
++      synchronized (SynchronizedRGB.this) {
++         sr.set(red, green, blue, name);
++         synchronized (this) {
++           try {
++              sr.invert();
++           } 
++           catch (Throwable ie) {
++           }
++         }
++      }
+     }
+   }
+ }

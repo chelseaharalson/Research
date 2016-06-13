@@ -1,0 +1,8 @@
+Ljava/util/HashMap;Ljava/util/Hashtable
+Ljava/util/HashMap;Ljava/util/ArrayList
+Ljava/lang/Class;Ljava/util/Hashtable
+Ljava/lang/Class;Ljava/util/HashMap
+Lorg/apache/felix/framework/URLHandlersBundleURLConnection;Ljava/lang/StringBuffer
+Ljava/util/ArrayList;Ljava/util/Hashtable
+Ljava/util/ArrayList;Ljava/lang/Class
+Lorg/apache/felix/framework/URLHandlers;Ljava/lang/StringBuffer

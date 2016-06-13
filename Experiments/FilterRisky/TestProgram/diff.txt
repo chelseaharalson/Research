@@ -1,0 +1,19 @@
+--- SynchronizedRGB.java	2015-11-09 16:14:03.452455049 -0500
++++ SynchronizedRGB2.java	2015-11-09 16:19:59.630083643 -0500
+@@ -60,6 +60,16 @@
+     SynchronizedRGB sr;
+     void cleanup() {
+       int taskId = sr.getRGB();
++      synchronized (SynchronizedRGB.this) {
++         sr.set(red, green, blue, name);
++         synchronized (this) {
++           try {
++              sr.invert();
++           } 
++           catch (Throwable ie) {
++           }
++         }
++      }
+     }
+   }
+ }

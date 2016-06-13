@@ -1,0 +1,511 @@
+--- TaskTracker_020.java	2006-05-05 17:52:13.000000000 -0400
++++ TaskTracker_030.java	2006-06-02 17:59:46.000000000 -0400
+@@ -15,15 +15,16 @@
+  */
+  package org.apache.hadoop.mapred;
+ 
++import org.apache.commons.logging.*;
++
+ import org.apache.hadoop.fs.*;
+-import org.apache.hadoop.io.*;
+ import org.apache.hadoop.ipc.*;
+ import org.apache.hadoop.util.*;
++import org.apache.hadoop.util.DiskChecker.DiskErrorException;
+ 
+ import java.io.*;
+ import java.net.*;
+ import java.util.*;
+-import java.util.logging.*;
+ 
+ /*******************************************************
+  * TaskTracker is a process that starts and tracks MR Tasks
+@@ -32,17 +33,19 @@
+  *
+  * @author Mike Cafarella
+  *******************************************************/
+-public class TaskTracker implements MRConstants, TaskUmbilicalProtocol, MapOutputProtocol, Runnable {
++public class TaskTracker 
++             implements MRConstants, TaskUmbilicalProtocol, Runnable {
+     static final long WAIT_FOR_DONE = 3 * 1000;
+     private long taskTimeout; 
++    private int httpPort;
+ 
+     static final int STALE_STATE = 1;
+ 
+     // required for unknown reason to make WritableFactories work distributed
+     static { new MapTask(); new ReduceTask(); new MapOutputLocation(); }
+ 
+-    public static final Logger LOG =
+-    LogFormatter.getLogger("org.apache.hadoop.mapred.TaskTracker");
++    public static final Log LOG =
++    LogFactory.getLog("org.apache.hadoop.mapred.TaskTracker");
+ 
+     private boolean running = true;
+ 
+@@ -72,48 +75,43 @@
+ 
+     private int maxCurrentTasks;
+     private int failures;
+-
+-    class MapOutputServer extends RPC.Server {
+-      private MapOutputServer(int port, int threads) {
+-        super(TaskTracker.this, fConf, port, threads, false);
+-      }
+-      public TaskTracker getTaskTracker() {
+-        return TaskTracker.this;
+-      }
+-    }
+-
++    
+     /**
+-     * Start with the local machine name, and the default JobTracker
++     * A list of tips that should be cleaned up.
+      */
+-    public TaskTracker(JobConf conf) throws IOException {
+-      this(JobTracker.getAddress(conf), conf);
+-    }
+-
++    private BlockingQueue tasksToCleanup = new BlockingQueue();
++    
+     /**
+-     * Start with the local machine name, and the addr of the target JobTracker
++     * A daemon-thread that pulls tips off the list of things to cleanup.
+      */
+-    public TaskTracker(InetSocketAddress jobTrackAddr, JobConf conf) throws IOException {
+-        maxCurrentTasks = conf.getInt("mapred.tasktracker.tasks.maximum", 2);
+-
+-        this.fConf = conf;
+-        this.jobTrackAddr = jobTrackAddr;
+-        this.taskTimeout = conf.getInt("mapred.task.timeout", 10* 60 * 1000);
+-        this.mapOutputFile = new MapOutputFile();
+-        this.mapOutputFile.setConf(conf);
+-        initialize();
++    private Thread taskCleanupThread = 
++      new Thread(new Runnable() {
++        public void run() {
++          while (true) {
++            try {
++              TaskInProgress tip = (TaskInProgress) tasksToCleanup.take();
++              tip.jobHasFinished();
++            } catch (Throwable except) {
++              LOG.warn(StringUtils.stringifyException(except));
++            }
++          }
++        }
++      });
++    {
++      taskCleanupThread.setDaemon(true);
++      taskCleanupThread.start();
+     }
+-
++    
+     /**
+      * Do the real constructor work here.  It's in a separate method
+      * so we can call it again and "recycle" the object after calling
+      * close().
+      */
+-    void initialize() throws IOException {
++    synchronized void initialize() throws IOException {
+         this.localHostname = InetAddress.getLocalHost().getHostName();
+-        this.taskTrackerName = "tracker_" + localHostname + "_" +
+-                               (Math.abs(r.nextInt()) % 100000);
+-        LOG.info("Starting tracker " + taskTrackerName);
+ 
++        //check local disk
++        checkLocalDirs(this.fConf.getLocalDirs());
+         fConf.deleteLocalFiles(SUBDIR);
+ 
+         // Clear out state tables
+@@ -138,16 +136,9 @@
+             }
+         
+         }
+-        while (true) {
+-            try {
+-                this.mapOutputServer = new MapOutputServer(mapOutputPort, maxCurrentTasks);
+-                this.mapOutputServer.start();
+-                break;
+-            } catch (BindException e) {
+-                LOG.info("Could not open mapoutput server at " + this.mapOutputPort + ", trying new port");
+-                this.mapOutputPort++;
+-            }
+-        }
++        this.taskTrackerName = "tracker_" + 
++                               localHostname + ":" + taskReportPort;
++        LOG.info("Starting tracker " + taskTrackerName);
+ 
+         // Clear out temporary files that might be lying around
+         this.mapOutputFile.cleanupStorage();
+@@ -205,6 +196,32 @@
+     }
+ 
+     /**
++     * Start with the local machine name, and the default JobTracker
++     */
++    public TaskTracker(JobConf conf) throws IOException {
++      maxCurrentTasks = conf.getInt("mapred.tasktracker.tasks.maximum", 2);
++      this.fConf = conf;
++      this.jobTrackAddr = JobTracker.getAddress(conf);
++      this.taskTimeout = conf.getInt("mapred.task.timeout", 10* 60 * 1000);
++      this.mapOutputFile = new MapOutputFile();
++      this.mapOutputFile.setConf(conf);
++      int httpPort = conf.getInt("tasktracker.http.port", 50060);
++      StatusHttpServer server = new StatusHttpServer("task", httpPort, true);
++      int workerThreads = conf.getInt("tasktracker.http.threads", 40);
++      server.setThreads(1, workerThreads);
++      server.start();
++      this.httpPort = server.getPort();
++      // let the jsp pages get to the task tracker, config, and other relevant
++      // objects
++      FileSystem local = FileSystem.getNamed("local", conf);
++      server.setAttribute("task.tracker", this);
++      server.setAttribute("local.file.system", local);
++      server.setAttribute("conf", conf);
++      server.setAttribute("log", LOG);
++      initialize();
++    }
++
++    /**
+      * The connection to the JobTracker, used by the TaskRunner 
+      * for locating remote files.
+      */
+@@ -259,7 +276,8 @@
+             
+             TaskTrackerStatus status = 
+               new TaskTrackerStatus(taskTrackerName, localHostname, 
+-                                    mapOutputPort, taskReports, failures); 
++                                    mapOutputPort, httpPort, taskReports, 
++                                    failures); 
+             int resultCode = jobClient.emitHeartbeat(status, justStarted);
+             justStarted = false;
+               
+@@ -272,11 +290,17 @@
+             //
+             try {
+               if (mapTotal < maxCurrentTasks || reduceTotal < maxCurrentTasks) {
++                  checkLocalDirs(fConf.getLocalDirs());
+                   Task t = jobClient.pollForNewTask(taskTrackerName);
+                   if (t != null) {
+                     startNewTask(t);
+                   }
+               }
++            } catch (DiskErrorException de ) {
++                LOG.warn("Exiting task tracker because "+de.getMessage());
++                jobClient.reportTaskTrackerError(taskTrackerName, 
++                        "DiskErrorException", de.getMessage());
++                return STALE_STATE;
+             } catch (IOException ie) {
+               LOG.info("Problem launching task: " + 
+                        StringUtils.stringifyException(ie));
+@@ -323,12 +347,11 @@
+             if (toCloseIds != null) {
+               synchronized (this) {
+                 for (int i = 0; i < toCloseIds.length; i++) {
+-                  TaskInProgress tip = (TaskInProgress) tasks.get(toCloseIds[i]);
+-                  try {
+-                    tip.jobHasFinished();
+-                  } catch (IOException ie) {
+-                    LOG.info("problem finishing task: " +
+-                             StringUtils.stringifyException(ie));
++                  Object tip = tasks.get(toCloseIds[i]);
++                  if (tip != null) {
++                    tasksToCleanup.put(tip);
++                  } else {
++                    LOG.info("Attempt to cleanup unknown tip " + toCloseIds[i]);
+                   }
+                 }
+               }
+@@ -376,7 +399,6 @@
+       }
+     }
+     
+-
+     /**
+      * The server retry loop.  
+      * This while-loop attempts to connect to the JobTracker.  It only 
+@@ -395,7 +417,7 @@
+                                 staleState = true;
+                             }
+                         } catch (Exception ex) {
+-                            LOG.log(Level.INFO, "Lost connection to JobTracker [" + jobTrackAddr + "].  Retrying...", ex);
++                            LOG.info("Lost connection to JobTracker [" + jobTrackAddr + "].  Retrying...", ex);
+                             try {
+                                 Thread.sleep(5000);
+                             } catch (InterruptedException ie) {
+@@ -414,6 +436,51 @@
+         }
+     }
+ 
++    /**
++     * This class implements a queue that is put between producer and 
++     * consumer threads. It will grow without bound.
++     * @author Owen O'Malley
++     */
++    static private class BlockingQueue {
++      private List queue;
++      
++      /**
++       * Create an empty queue.
++       */
++      public BlockingQueue() {
++        queue = new ArrayList();
++      }
++       
++      /**
++       * Put the given object at the back of the queue.
++       * @param obj
++       */
++      public void put(Object obj) {
++        synchronized (queue) {
++          queue.add(obj);
++          queue.notify();
++        }
++      }
++      
++      /**
++       * Take the object at the front of the queue.
++       * It blocks until there is an object available.
++       * @return the head of the queue
++       */
++      public Object take() {
++        synchronized (queue) {
++          while (queue.isEmpty()) {
++            try {
++              queue.wait();
++            } catch (InterruptedException ie) {}
++          }
++          Object result = queue.get(0);
++          queue.remove(0);
++          return result;
++        }
++      }
++    }
++    
+     ///////////////////////////////////////////////////////
+     // TaskInProgress maintains all the info for a Task that
+     // lives at this TaskTracker.  It maintains the Task object,
+@@ -632,7 +699,7 @@
+               runningTasks.put(task.getTaskId(), this);
+               mapTotal++;
+             } else {
+-              LOG.warning("Output already reported lost:"+task.getTaskId());
++              LOG.warn("Output already reported lost:"+task.getTaskId());
+             }
+         }
+ 
+@@ -641,27 +708,22 @@
+          * controlling job is all done and the files have been copied
+          * away, or the task failed and we don't need the remains.
+          */
+-        synchronized void cleanup() throws IOException {
+-            tasks.remove(task.getTaskId());
+-            try {
+-                runner.close();
+-            } catch (IOException ie) {
++        void cleanup() throws IOException {
++            String taskId = task.getTaskId();
++            LOG.debug("Cleaning up " + taskId);
++            synchronized (TaskTracker.this) {
++               tasks.remove(taskId);
++               synchronized (this) {
++                 try {
++                    runner.close();
++                 } catch (Throwable ie) {
++                 }
++               }
+             }
+-            this.defaultJobConf.deleteLocalFiles(SUBDIR + "/" + task.getTaskId());
++            this.defaultJobConf.deleteLocalFiles(SUBDIR + "/" + taskId);
+         }
+     }
+ 
+-    /////////////////////////////////////////////////////////////////
+-    // MapOutputProtocol
+-    /////////////////////////////////////////////////////////////////
+-    public MapOutputFile getFile(String mapTaskId, String reduceTaskId,
+-      IntWritable partition) {
+-    MapOutputFile mapOutputFile = new MapOutputFile(mapTaskId, reduceTaskId,
+-        partition.get());
+-    mapOutputFile.setConf(this.fConf);
+-    return mapOutputFile;
+-  }
+-
+     // ///////////////////////////////////////////////////////////////
+     // TaskUmbilicalProtocol
+     /////////////////////////////////////////////////////////////////
+@@ -685,7 +747,7 @@
+         if (tip != null) {
+           tip.reportProgress(progress, state);
+         } else {
+-          LOG.warning("Progress from unknown child task: "+taskid+". Ignored.");
++          LOG.warn("Progress from unknown child task: "+taskid+". Ignored.");
+         }
+     }
+ 
+@@ -698,7 +760,7 @@
+         if (tip != null) {
+           tip.reportDiagnosticInfo(info);
+         } else {
+-          LOG.warning("Error from unknown child task: "+taskid+". Ignored.");
++          LOG.warn("Error from unknown child task: "+taskid+". Ignored.");
+         }
+     }
+ 
+@@ -715,14 +777,14 @@
+         if (tip != null) {
+           tip.reportDone();
+         } else {
+-          LOG.warning("Unknown child task done: "+taskid+". Ignored.");
++          LOG.warn("Unknown child task done: "+taskid+". Ignored.");
+         }
+     }
+ 
+     /** A child task had a local filesystem error.  Exit, so that no future
+      * jobs are accepted. */
+     public synchronized void fsError(String message) throws IOException {
+-      LOG.severe("FSError, exiting: "+ message);
++      LOG.fatal("FSError, exiting: "+ message);
+       running = false;
+     }
+ 
+@@ -740,7 +802,7 @@
+         if (tip != null) {
+           tip.taskFinished();
+         } else {
+-          LOG.warning("Unknown child task finshed: "+taskid+". Ignored.");
++          LOG.warn("Unknown child task finshed: "+taskid+". Ignored.");
+         }
+     }
+ 
+@@ -752,7 +814,7 @@
+         if (tip != null) {
+           tip.mapOutputLost();
+         } else {
+-          LOG.warning("Unknown child with bad map output: "+taskid+". Ignored.");
++          LOG.warn("Unknown child with bad map output: "+taskid+". Ignored.");
+         }
+     }
+ 
+@@ -761,7 +823,7 @@
+      */
+     public static class Child {
+         public static void main(String[] args) throws Throwable {
+-          LogFormatter.showTime(false);
++          //LogFactory.showTime(false);
+           LOG.info("Child starting");
+ 
+           JobConf defaultConf = new JobConf();
+@@ -784,10 +846,10 @@
+             FileSystem.get(job).setWorkingDirectory(job.getWorkingDirectory());
+             task.run(job, umbilical);             // run the task
+           } catch (FSError e) {
+-            LOG.log(Level.SEVERE, "FSError from child", e);
++            LOG.fatal("FSError from child", e);
+             umbilical.fsError(e.getMessage());
+           } catch (Throwable throwable) {
+-              LOG.log(Level.WARNING, "Error running child", throwable);
++              LOG.warn("Error running child", throwable);
+               // Report back any failures, for diagnostic purposes
+               ByteArrayOutputStream baos = new ByteArrayOutputStream();
+               throwable.printStackTrace(new PrintStream(baos));
+@@ -805,7 +867,7 @@
+                 while (true) {
+                   try {
+                     if (!umbilical.ping(taskid)) {
+-                      LOG.log(Level.WARNING, "Parent died.  Exiting "+taskid);
++                      LOG.warn("Parent died.  Exiting "+taskid);
+                       System.exit(66);
+                     }
+                     remainingRetries = MAX_RETRIES;
+@@ -814,7 +876,7 @@
+                     LOG.info("Ping exception: " + msg);
+                     remainingRetries -=1;
+                     if (remainingRetries == 0) {
+-                      LOG.log(Level.WARNING, "Last retry, killing "+taskid);
++                      LOG.warn("Last retry, killing "+taskid);
+                       System.exit(65);
+                     }
+                   }
+@@ -831,17 +893,77 @@
+     }
+ 
+     /**
++     * Get the name for this task tracker.
++     * @return the string like "tracker_mymachine:50010"
++     */
++    String getName() {
++      return taskTrackerName;
++    }
++    
++    /**
++     * Get the list of tasks that will be reported back to the 
++     * job tracker in the next heartbeat cycle.
++     * @return a copy of the list of TaskStatus objects
++     */
++    synchronized List getRunningTaskStatuses() {
++      List result = new ArrayList(runningTasks.size());
++      Iterator itr = runningTasks.values().iterator();
++      while (itr.hasNext()) {
++        TaskInProgress tip = (TaskInProgress) itr.next();
++        result.add(tip.createStatus());
++      }
++      return result;
++    }
++    
++    /**
++     * Get the default job conf for this tracker.
++     */
++    JobConf getJobConf() {
++      return fConf;
++    }
++    
++    /**
++     * Check if the given local directories
++     * (and parent directories, if necessary) can be created.
++     * @param localDirs where the new TaskTracker should keep its local files.
++     * @throws DiskErrorException if all local directories are not writable
++     * @author hairong
++     */
++    private static void checkLocalDirs( String[] localDirs ) 
++            throws DiskErrorException {
++        boolean writable = false;
++        
++        if( localDirs != null ) {
++            for (int i = 0; i < localDirs.length; i++) {
++                try {
++                    DiskChecker.checkDir( new File(localDirs[i]) );
++                    writable = true;
++                } catch( DiskErrorException e ) {
++                    LOG.warn("Task Tracker local " + e.getMessage() );
++                }
++            }
++        }
++
++        if( !writable )
++            throw new DiskErrorException( 
++                    "all local directories are not writable" );
++    }
++    
++    /**
+      * Start the TaskTracker, point toward the indicated JobTracker
+      */
+-    public static void main(String argv[]) throws IOException {
++    public static void main(String argv[]) throws Exception {
+         if (argv.length != 0) {
+             System.out.println("usage: TaskTracker");
+             System.exit(-1);
+         }
+ 
+-        JobConf conf=new JobConf();
+-        LogFormatter.initFileHandler( conf, "tasktracker" );
+-        TaskTracker tt = new TaskTracker(conf);
+-        tt.run();
++        try {
++          JobConf conf=new JobConf();
++          new TaskTracker(conf).run();
++        } catch (IOException e) {
++            LOG.warn( "Can not start task tracker because "+e.getMessage());
++            System.exit(-1);
++        }
+     }
+ }

@@ -1,0 +1,5 @@
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;unregisterFrameworkListsForContextSearch;monitorenter;208;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;registerFrameworkInstance;monitorenter;507;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;unregisterFrameworkInstance;monitorenter;535;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;getFrameworkFromContext;monitorenter;608;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers
+

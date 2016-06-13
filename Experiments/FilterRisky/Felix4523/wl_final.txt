@@ -1,0 +1,5 @@
+Lorg/apache/felix/framework/URLHandlers;Ljava/util/ArrayList
+Ljava/util/HashMap;Ljava/lang/Class
+Ljava/lang/Class;Ljava/util/HashMap
+Ljava/lang/Class;Ljava/util/ArrayList
+Ljava/util/ArrayList;Ljava/lang/Class

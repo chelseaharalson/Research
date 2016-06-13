@@ -1,0 +1,42 @@
+--- TaskTracker_020.java	2006-05-05 17:52:13.000000000 -0400
++++ TaskTracker_030.java	2006-06-02 17:59:46.000000000 -0400
+@@ -641,27 +708,22 @@
+          * controlling job is all done and the files have been copied
+          * away, or the task failed and we don't need the remains.
+          */
+-        synchronized void cleanup() throws IOException {
+-            tasks.remove(task.getTaskId());
+-            try {
+-                runner.close();
+-            } catch (IOException ie) {
++        void cleanup() throws IOException {
++            String taskId = task.getTaskId();
++            LOG.debug("Cleaning up " + taskId);
++            synchronized (TaskTracker.this) {
++               tasks.remove(taskId);
++               synchronized (this) {
++                 try {
++                    runner.close();
++                 } catch (Throwable ie) {
++                 }
++               }
+             }
+-            this.defaultJobConf.deleteLocalFiles(SUBDIR + "/" + task.getTaskId());
++            this.defaultJobConf.deleteLocalFiles(SUBDIR + "/" + taskId);
+         }
+     }
+ 
+-    /////////////////////////////////////////////////////////////////
+-    // MapOutputProtocol
+-    /////////////////////////////////////////////////////////////////
+-    public MapOutputFile getFile(String mapTaskId, String reduceTaskId,
+-      IntWritable partition) {
+-    MapOutputFile mapOutputFile = new MapOutputFile(mapTaskId, reduceTaskId,
+-        partition.get());
+-    mapOutputFile.setConf(this.fConf);
+-    return mapOutputFile;
+-  }
+-
+     // ///////////////////////////////////////////////////////////////
+     // TaskUmbilicalProtocol
+     /////////////////////////////////////////////////////////////////

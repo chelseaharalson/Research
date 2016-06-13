@@ -1,0 +1,21 @@
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;904;Ljava/util/ArrayList;Ljava/util/TreeMap ---- TYPE 1    -  synchronized void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;904;Lorg/apache/hadoop/mapred/JobTracker;Ljava/util/TreeMap ---- TYPE 1    -  synchronized void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;904;Lorg/apache/hadoop/mapred/JobInProgress;Ljava/util/TreeMap ---- TYPE 1    -  synchronized void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;904;Ljava/util/TreeSet;Ljava/util/TreeMap ---- TYPE 1    -  synchronized void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;904;Ljava/util/LinkedHashMap;Ljava/util/TreeMap ---- TYPE 1    -  synchronized void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;913;Ljava/util/TreeMap;Ljava/util/ArrayList ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;913;Ljava/util/TreeMap;Lorg/apache/hadoop/mapred/JobTracker ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;916;Ljava/util/TreeMap;Lorg/apache/hadoop/mapred/JobTracker ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;913;Ljava/util/TreeMap;Lorg/apache/hadoop/mapred/JobInProgress ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;916;Ljava/util/TreeMap;Lorg/apache/hadoop/mapred/JobInProgress ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;913;Ljava/util/TreeMap;Ljava/util/TreeSet ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;916;Ljava/util/TreeMap;Ljava/util/TreeSet ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;913;Ljava/util/TreeMap;Ljava/util/LinkedHashMap ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobTracker;finalizeJob;monitorenter;916;Ljava/util/TreeMap;Ljava/util/LinkedHashMap ---- TYPE 6    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobInProgress;garbageCollect;cleanUpMetrics;1086;Lorg/apache/hadoop/mapred/JobInProgress;Ljava/util/TreeMap ---- TYPE 4C (4c)    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobInProgress;garbageCollect;cleanUpMetrics;1086;Lorg/apache/hadoop/mapred/JobInProgress;Ljava/util/ArrayList ---- TYPE 4C (4c)    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=onward;Lorg/apache/hadoop/mapred/JobInProgress;garbageCollect;cleanUpMetrics;1086;Lorg/apache/hadoop/mapred/JobInProgress;Lorg/apache/hadoop/mapred/JobTracker ---- TYPE 4C (4c)    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=pre;Lorg/apache/hadoop/mapred/JobInProgress;garbageCollect;cleanUpMetrics;1086;Ljava/util/TreeMap;Lorg/apache/hadoop/mapred/JobInProgress ---- TYPE 4C (4c)    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=pre;Lorg/apache/hadoop/mapred/JobInProgress;garbageCollect;cleanUpMetrics;1086;Lorg/apache/hadoop/mapred/JobTracker;Lorg/apache/hadoop/mapred/JobInProgress ---- TYPE 4C (4c)    +  void finalizeJob(JobInProgress job) { at line 904
+refPoint=pre;Lorg/apache/hadoop/mapred/JobInProgress;garbageCollect;cleanUpMetrics;1086;Ljava/util/ArrayList;Lorg/apache/hadoop/mapred/JobInProgress ---- TYPE 4C (4c)    +  void finalizeJob(JobInProgress job) { at line 904
+

@@ -1,0 +1,3 @@
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;registerFrameworkInstance;monitorenter;620;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers ---- TYPE 2    +                    synchronized (m_frameworks) at line 620
+refPoint=onward;Lorg/apache/felix/framework/URLHandlers;unregisterFrameworkInstance;monitorenter;670;Ljava/util/ArrayList;Lorg/apache/apache/felix/framework/URLHandlers ---- TYPE 2    +                    synchronized (m_frameworks) at line 670
+

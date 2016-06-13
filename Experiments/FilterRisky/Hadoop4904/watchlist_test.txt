@@ -1,0 +1,11 @@
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/dfs/FSNamesystem$SafeModeInfo
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/dfs/FSDirectory
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/io/DataOutputBuffer
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/metrics/util/MetricsTimeVaryingInt
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/dfs/GenerationStamp
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/dfs/INodeDirectoryWithQuota
+Lorg/apache/hadoop/dfs/FSNamesystem;Ljava/util/TreeSet
+Lorg/apache/hadoop/dfs/FSNamesystem;Ljava/io/DataOutputStream
+Lorg/apache/hadoop/dfs/FSNamesystem;Ljava/util/Stack
+Lorg/apache/hadoop/dfs/FSNamesystem;Lorg/apache/hadoop/dfs/DatanodeDescriptor
+Lorg/apache/hadoop/dfs/FSNamesystem;Ljava/util/Properties
