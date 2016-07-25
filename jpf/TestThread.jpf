@@ -1,0 +1,5 @@
+target = TestThread
+
+listener=gov.nasa.jpf.listener.ThreadAnalyzer
+
+report.console.property_violation=error,trace
