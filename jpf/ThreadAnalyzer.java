@@ -20,6 +20,7 @@ import gov.nasa.jpf.jvm.bytecode.MONITORENTER;
 import gov.nasa.jpf.vm.InfoObject;
 import gov.nasa.jpf.vm.bytecode.InstanceInvokeInstruction;
 import gov.nasa.jpf.vm.ThreadChoiceGenerator;
+import gov.nasa.jpf.vm.choice.ThreadChoiceFromSet;
 
 import java.io.PrintWriter;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -30,6 +31,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.Element;
 import java.io.File;
 import java.util.*;
+import java.lang.Math;
 
 public class ThreadAnalyzer extends ListenerAdapter {
   
@@ -72,6 +74,9 @@ public class ThreadAnalyzer extends ListenerAdapter {
   static HashMap<Integer, HashSet<Integer>> isNestedMapSecond = new HashMap<Integer,HashSet<Integer>>();
   static HashMap<Integer, HashSet<Integer>> isReachableMapFirst = new HashMap<Integer,HashSet<Integer>>();
   static HashMap<Integer, HashSet<Integer>> isReachableMapSecond = new HashMap<Integer,HashSet<Integer>>();
+  static HashMap<ThreadInfo, Integer> priorityTable = new HashMap<ThreadInfo, Integer>();
+  static List<Priority> pList = new ArrayList<Priority>();
+  static boolean changePriorities = true;
 
 
   Integer readXMLfileReturnID(String mode, int lineNUM, String methodNAME, String classNAME) {
@@ -247,6 +252,12 @@ public class ThreadAnalyzer extends ListenerAdapter {
     oneToMany.put(key, set);
     //return result;
   }
+
+  public static Integer generateRandomPriorityNum() {
+    Random rand = new Random();
+    Integer priority = rand.nextInt(50);
+    return priority;
+  }
   
   public ThreadAnalyzer (Config config) {
     /** @jpfoption et.print_insn : boolean - print executed bytecode instructions (default=true). */
@@ -381,8 +392,9 @@ public class ThreadAnalyzer extends ListenerAdapter {
   }
 
   void logMethodCall(ThreadInfo ti, MethodInfo mi, int stackDepth) {
-    out.print(ti.getId());
+    out.print("THREAD ID @@@@@@@@@@@@@@@@@@@@@@@ " + ti.getId());
     out.print(":");
+    out.print(" THREAD NAME: " + ti.getName());
 
     for (int i=0; i<stackDepth%80; i++) {
       out.print(INDENT);
@@ -437,11 +449,148 @@ public class ThreadAnalyzer extends ListenerAdapter {
       if (callee != null) {
         if (callee.isMJI()) {
           logMethodCall(ti, callee, ti.getStackDepth()+1);
+          /*Integer priority = generateRandomPriorityNum();
+          priorityTable.put(ti, priority);
+          System.out.println("PRIORITY TABLE: " + priorityTable);
+          //pList = new ArrayList<Priority>(priority.values());
+          pList.add(new Priority(ti,priority));*/
         }
       } else {
         out.println("ERROR: unknown callee of: " + insnToExecute);
       }
     }
+
+    //else if (insnToExecute instanceof MONITORENTER) {
+      //if (changePriorities) - reorder
+    //}
+  }
+
+  @Override
+  public void threadStarted(VM vm, ThreadInfo ti) {
+    out.println( "\t\t # thread started: " + ti.getName() + " index: " + ti.getId());
+  }
+
+  @Override
+  public void searchStarted(Search search) {
+    Stack priorityStack = new Stack();
+    out.println("----------------------------------- search started");
+    //if (skipInit) {
+      ThreadInfo tiCurrent = ThreadInfo.getCurrentThread();
+      miMain = tiCurrent.getEntryMethod();
+      out.println("ENTRY METHOD: " + miMain + "\t THREAD: " + tiCurrent);
+      //out.println("      [skipping static init instructions]");
+    //}
+    priorityStack.push(tiCurrent);
+  }
+
+  @Override
+  public void stateAdvanced(Search search) {
+    // is this a new stack or a global one?
+  }
+
+  @Override
+  public void choiceGeneratorSet(VM vm, ChoiceGenerator<?> newCG) {
+    System.out.println("Entering choiceGeneratorSet()");
+    if (newCG instanceof ThreadChoiceFromSet) {
+      ThreadInfo[] threads = ((ThreadChoiceFromSet)newCG).getAllThreadChoices();
+      // if changePriorities = true, then reorder and print
+      //newCG.reorder();
+      //checkSchedule(threads);
+
+      //Integer priority = generateRandomPriorityNum();
+      priorityTable = new HashMap<ThreadInfo, Integer>();
+      for (int i = 0; i < threads.length; i++) {
+        priorityTable.put(threads[i], i);
+        //System.out.println("PRIORITY TABLE: " + priorityTable);
+        //pList.add(new Priority(threads[i],i));
+
+        /*if (changePriorities == true) {
+          reorder(threads[i]);
+        }
+        else {
+          Instruction insn = threads[i].getPC();
+          MethodInfo mi = insn.getMethodInfo();
+          System.out.println("OUTPUTTING SCHEDULE (NOT REORDERED)... " + threads[i] + "\t" + insn + "\t" + mi + "\t ORDER: " + i);
+        }*/
+      }
+      if (changePriorities == true) {
+        System.out.println("Reordering...");
+        newCG.reorder(new Priority(priorityTable));
+
+        for (int j = 0; j < threads.length; j++) {
+          Instruction insn = threads[j].getPC();
+          MethodInfo mi = insn.getMethodInfo();
+          System.out.println("OUTPUTTING SCHEDULE (REORDERED)... " + threads[j] + "\t" + insn + "\t" + mi + "\t ORDER: " + j);
+        }
+      }
+      else {
+        // print out original order
+        for (int j = 0; j < threads.length; j++) {
+          Instruction insn = threads[j].getPC();
+          MethodInfo mi = insn.getMethodInfo();
+          System.out.println("OUTPUTTING SCHEDULE (NOT REORDERED)... " + threads[j] + "\t" + insn + "\t" + mi + "\t ORDER: " + j);
+        }
+      }
+    }
+  }
+
+  /*public void reorder(ThreadInfo ti) {
+    // Sorts the ThreadInfo using comparator
+    Collections.sort(pList, new Priority());
+    System.out.println(" ");
+    for (Priority pr : pList) {   // printing sorted list of priority numbers
+      System.out.print("REORDERED SCHEDULE:    " + pr.getThreadInfo() + "  :  " + pr.getPriorityNum() + ", ");
+    }
+  }*/
+
+  /*public void checkSchedule (ThreadInfo[] threads) {
+    // if using thread table, then print from priorirty table - call reorder
+    // else do below:
+    for (int i = 0; i < threads.length; i++) {
+      ThreadInfo ti = threads[i];
+      Instruction insn = ti.getPC();
+      MethodInfo mi = insn.getMethodInfo();
+      System.out.println("OUTPUTTING SCHEDULE... " + ti + "\t" + insn + "\t" + mi + "\t ORDER: " + i);
+    }
+  }*/
+
+  class Priority<ThreadInfo> implements Comparator<ThreadInfo> {
+    private ThreadInfo threadInfo;
+    private int priorityNum;
+    private HashMap<ThreadInfo, Integer> priorTable = new HashMap<ThreadInfo, Integer>();
+
+    Priority(HashMap<ThreadInfo, Integer> pTable) {
+      priorTable = pTable;
+    }
+
+    /*Priority(ThreadInfo ti, int pNum) {
+      threadInfo = ti;
+      priorityNum = pNum;
+    }*/
+
+    public ThreadInfo getThreadInfo() {
+      return threadInfo;
+    }
+
+    public int getPriorityNum() {
+      return priorityNum;
+    }
+
+    // Overriding compareTo method
+    /*public int compareTo(ThreadInfo ti) {
+      return (this).compareTo(ti);
+    }*/
+    /*public int compareTo(Priority p) {
+      return (this.threadInfo).compareTo(p.threadInfo);
+    }*/
+
+    // Overriding compare method to sort priority number
+    public int compare(ThreadInfo t1, ThreadInfo t2) {
+      return priorTable.get(t1) - priorTable.get(t2);
+    }
+    /*public int compare(Priority p1, Priority p2) {
+      return p1.priorityNum - p2.priorityNum;
+    }*/
   }
 
 }
