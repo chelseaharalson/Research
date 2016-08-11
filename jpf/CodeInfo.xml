@@ -1,95 +1,141 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <relation>
 	<isAClass id="100">
-		<c>TestThread</c>
+		<c>TestThreadEx</c>
 	</isAClass>
 	<isAClass id="101">
-		<c>TestThread$ThreadDemo1</c>
+		<c>TestThreadEx$ThreadDemo1</c>
 	</isAClass>
 	<isAClass id="102">
-		<c>java.lang.Object</c>
+		<c>TestThreadEx$ThreadDemo2</c>
 	</isAClass>
 	<isAClass id="103">
-		<c>TestThread$ThreadDemo2</c>
+		<c>TestThreadEx$ThreadDemo3</c>
 	</isAClass>
 	<isAClass id="104">
-		<c>TestThread$ThreadDemo3</c>
+		<c>TestThreadEx$ThreadDemo4</c>
+	</isAClass>
+	<isAClass id="105">
+		<c>TestThreadEx$ThreadDemo5</c>
+	</isAClass>
+	<isAClass id="106">
+		<c>TestThreadEx$MyObject1</c>
+	</isAClass>
+	<isAClass id="107">
+		<c>TestThreadEx$MyObject2</c>
+	</isAClass>
+	<isAClass id="108">
+		<c>TestThreadEx$MyObject3</c>
+	</isAClass>
+	<isAClass id="109">
+		<c>TestThreadEx$MyObject4</c>
+	</isAClass>
+	<isAClass id="110">
+		<c>TestThreadEx$MyObject5</c>
 	</isAClass>
 	<isAMethod id="200">
 		<m>run</m>
-		<c>TestThread$ThreadDemo1</c>
+		<c>TestThreadEx$ThreadDemo1</c>
 	</isAMethod>
 	<isAMethod id="201">
 		<m>run</m>
-		<c>TestThread$ThreadDemo2</c>
+		<c>TestThreadEx$ThreadDemo2</c>
 	</isAMethod>
 	<isAMethod id="202">
 		<m>run</m>
-		<c>TestThread$ThreadDemo3</c>
+		<c>TestThreadEx$ThreadDemo3</c>
 	</isAMethod>
 	<isAMethod id="203">
-		<m>addNum</m>
-		<c>TestThread</c>
+		<m>run</m>
+		<c>TestThreadEx$ThreadDemo4</c>
 	</isAMethod>
 	<isAMethod id="204">
-		<m>main</m>
-		<c>TestThread</c>
+		<m>run</m>
+		<c>TestThreadEx$ThreadDemo5</c>
 	</isAMethod>
 	<isAMethod id="205">
+		<m>addNum</m>
+		<c>TestThreadEx</c>
+	</isAMethod>
+	<isAMethod id="206">
+		<m>main</m>
+		<c>TestThreadEx</c>
+	</isAMethod>
+	<isAMethod id="207">
 		<m>increment</m>
 		<c>TestThread</c>
 	</isAMethod>
 	<isAMonitorEnter id="300">
-		<f>TestThread.java</f>
-		<l>19</l>
+		<f>TestThreadEx.java</f>
+		<l>42</l>
 		<m>run</m>
-		<c>java.lang.Object</c>
+		<c>TestThreadEx$MyObject1</c>
 	</isAMonitorEnter>
 	<isAMonitorEnter id="301">
-		<f>TestThread.java</f>
-		<l>24</l>
-		<m>run</m>
-		<c>java.lang.Object</c>
-	</isAMonitorEnter>
-	<isAMonitorEnter id="302">
-		<f>TestThread.java</f>
-		<l>33</l>
-		<m>run</m>
-		<c>java.lang.Object</c>
-	</isAMonitorEnter>
-	<isAMonitorEnter id="303">
-		<f>TestThread.java</f>
-		<l>38</l>
-		<m>run</m>
-		<c>java.lang.Object</c>
-	</isAMonitorEnter>
-	<isAMonitorEnter id="304">
-		<f>TestThread.java</f>
+		<f>TestThreadEx.java</f>
 		<l>47</l>
 		<m>run</m>
-		<c>java.lang.Object</c>
+		<c>TestThreadEx$MyObject2</c>
+	</isAMonitorEnter>
+	<isAMonitorEnter id="302">
+		<f>TestThreadEx.java</f>
+		<l>56</l>
+		<m>run</m>
+		<c>TestThreadEx$MyObject3</c>
+	</isAMonitorEnter>
+	<isAMonitorEnter id="303">
+		<f>TestThreadEx.java</f>
+		<l>61</l>
+		<m>run</m>
+		<c>TestThreadEx$MyObject4</c>
+	</isAMonitorEnter>
+	<isAMonitorEnter id="304">
+		<f>TestThreadEx.java</f>
+		<l>70</l>
+		<m>run</m>
+		<c>TestThreadEx$MyObject2</c>
 	</isAMonitorEnter>
 	<isAMonitorEnter id="305">
-		<f>TestThread.java</f>
-		<l>52</l>
+		<f>TestThreadEx.java</f>
+		<l>75</l>
 		<m>run</m>
-		<c>java.lang.Object</c>
+		<c>TestThreadEx$MyObject1</c>
+	</isAMonitorEnter>
+	<isAMonitorEnter id="306">
+		<f>TestThreadEx.java</f>
+		<l>84</l>
+		<m>run</m>
+		<c>TestThreadEx$MyObject4</c>
+	</isAMonitorEnter>
+	<isAMonitorEnter id="307">
+		<f>TestThreadEx.java</f>
+		<l>89</l>
+		<m>run</m>
+		<c>TestThreadEx$MyObject5</c>
+	</isAMonitorEnter>
+	<isAMonitorEnter id="308">
+		<f>TestThreadEx.java</f>
+		<l>98</l>
+		<m>run</m>
+		<c>TestThreadEx$MyObject5</c>
 	</isAMonitorEnter>
 	<isAMethodInvoke id="400">
 		<m>addNum</m>
-		<f>TestThread.java</f>
+		<f>TestThreadEx.java</f>
 		<l>14</l>
 	</isAMethodInvoke>
 	<isSynchronizedMethod id="205"/>
 	<isNestedAcquired id1="300" id2="301"/>
 	<isNestedAcquired id1="302" id2="303"/>
 	<isNestedAcquired id1="304" id2="305"/>
+	<isNestedAcquired id1="306" id2="307"/>
 	<isReachable id1="200" id2="300"/>
 	<isReachable id1="200" id2="301"/>
 	<isReachable id1="201" id2="302"/>
 	<isReachable id1="201" id2="303"/>
 	<isReachable id1="202" id2="304"/>
 	<isReachable id1="202" id2="305"/>
-	<isReachable id1="204" id2="203"/>
-	<isReachable id1="203" id2="205"/>
+	<isReachable id1="203" id2="306"/>
+	<isReachable id1="203" id2="307"/>
+	<isReachable id1="204" id2="308"/>
 </relation>

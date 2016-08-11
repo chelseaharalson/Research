@@ -75,7 +75,7 @@ public class Query {
 	  	}
 
 	  	else if (choice == 4) {
-	  		int reachableSearchId1 = scanner.nextInt();
+	  	int reachableSearchId1 = scanner.nextInt();
 			int reachableSearchId2 = scanner.nextInt();
 		  	for (Integer key : isReachableMapFirst.keySet()) {
 		  		HashSet<Integer> isReachableSet = isReachableMapFirst.get(key);

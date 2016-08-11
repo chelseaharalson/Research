@@ -234,7 +234,7 @@ public class ThreadAnalyzer extends ListenerAdapter {
       } catch (Exception e) {
         e.printStackTrace();
       }
-    //System.out.println("isNestedMap: " + isNestedMapSecond);
+    //System.out.println("isNestedMap: " + isNestedMapFirst);
     //System.out.println("isReachableMap: " + isReachableMap);
     return attributeID;
   }
@@ -303,6 +303,9 @@ public class ThreadAnalyzer extends ListenerAdapter {
         line = inst[i].getLineNumber();
         out.println("FOUND INVOKE INSTRUCTION: " + inst[i] + "\t" + "LINE NUMBER: " + line + "  IN CLASS: " + mci.getName() + ", METHOD: " + mi.getName());
       }*/
+
+      //System.out.println("Looking at instruction in instructionExecuted: " + inst[i] + " at line " + inst[i].getLineNumber());
+
       line = inst[i].getLineNumber();
       methodName = mi.getName();
       className = mci.getName();
@@ -415,10 +418,13 @@ public class ThreadAnalyzer extends ListenerAdapter {
 
   @Override
   public void executeInstruction (VM vm, ThreadInfo ti, Instruction insnToExecute) {
+    //priorityTable = new HashMap<ThreadInfo, Integer>();
+    //priorityTable.put(ti, );
+
     MethodInfo mi = insnToExecute.getMethodInfo();
 
     if (mi != lastMi) {
-      logMethodCall(ti, mi, ti.getStackDepth());
+      //logMethodCall(ti, mi, ti.getStackDepth());
       lastMi = mi;
 
     } else if (insnToExecute instanceof JVMInvokeInstruction) {
@@ -448,7 +454,8 @@ public class ThreadAnalyzer extends ListenerAdapter {
 
       if (callee != null) {
         if (callee.isMJI()) {
-          logMethodCall(ti, callee, ti.getStackDepth()+1);
+          //logMethodCall(ti, callee, ti.getStackDepth()+1);
+          
           /*Integer priority = generateRandomPriorityNum();
           priorityTable.put(ti, priority);
           System.out.println("PRIORITY TABLE: " + priorityTable);
@@ -493,35 +500,43 @@ public class ThreadAnalyzer extends ListenerAdapter {
     System.out.println("Entering choiceGeneratorSet()");
     if (newCG instanceof ThreadChoiceFromSet) {
       ThreadInfo[] threads = ((ThreadChoiceFromSet)newCG).getAllThreadChoices();
-      // if changePriorities = true, then reorder and print
-      //newCG.reorder();
-      //checkSchedule(threads);
-
-      //Integer priority = generateRandomPriorityNum();
+      // Fill out priority table
       priorityTable = new HashMap<ThreadInfo, Integer>();
       for (int i = 0; i < threads.length; i++) {
-        priorityTable.put(threads[i], i);
-        //System.out.println("PRIORITY TABLE: " + priorityTable);
-        //pList.add(new Priority(threads[i],i));
-
-        /*if (changePriorities == true) {
-          reorder(threads[i]);
-        }
-        else {
-          Instruction insn = threads[i].getPC();
-          MethodInfo mi = insn.getMethodInfo();
-          System.out.println("OUTPUTTING SCHEDULE (NOT REORDERED)... " + threads[i] + "\t" + insn + "\t" + mi + "\t ORDER: " + i);
-        }*/
+        priorityTable.put(threads[i], threads.length-i-1);
       }
-      if (changePriorities == true) {
-        System.out.println("Reordering...");
-        newCG.reorder(new Priority(priorityTable));
 
-        for (int j = 0; j < threads.length; j++) {
+      if (changePriorities == true) {
+        for (int i = 0; i < threads.length; i++) {
+          Instruction insn = threads[i].getPC();
+          if (insn instanceof MONITORENTER) {
+            Integer instrAttr = insn.getAttr(Integer.class);
+            boolean varIsNested = isNested(instrAttr);
+            //boolean varIsCrossedAliased = isCrossedAliased(instrAttr);
+            //  System.out.println("CHANGE PRIORITIES: MONITORENTER!!!!!!! " + insn + "\t" + instrAttr);
+            /*if (varIsNested == false || varIsCrossedAliased == false) {
+              // lower priority of this thread
+              // reorder CG set
+              priorityTable.remove(threads[i]);
+              //move to left and put at end
+              priorityTable.put(threads[i], i);
+              newCG = newCG.reorder(new Priority(priorityTable));
+            }*/
+          }
+        }
+        //System.out.println("Reordering...");
+        //newCG = newCG.reorder(new Priority(priorityTable));
+        /*ThreadInfo[] threadsArr = ((ThreadChoiceFromSet)newCG).getAllThreadChoices();
+        for (int j = 0; j < threadsArr.length; j++) {
+          Instruction insn = threadsArr[j].getPC();
+          MethodInfo mi = insn.getMethodInfo();
+          System.out.println("THREADS ARR: OUTPUTTING SCHEDULE (REORDERED)... " + threadsArr[j] + "\t" + insn + "\t" + mi + "\t ORDER: " + j + "     " + priorityTable.get(threadsArr[j]));
+        }*/
+        /*for (int j = 0; j < threads.length; j++) {
           Instruction insn = threads[j].getPC();
           MethodInfo mi = insn.getMethodInfo();
-          System.out.println("OUTPUTTING SCHEDULE (REORDERED)... " + threads[j] + "\t" + insn + "\t" + mi + "\t ORDER: " + j);
-        }
+          System.out.println("OUTPUTTING SCHEDULE (REORDERED)... " + threads[j] + "\t" + insn + "\t" + mi + "\t ORDER: " + j + "      " + priorityTable.get(threadsArr[j]));
+        }*/
       }
       else {
         // print out original order
@@ -534,25 +549,65 @@ public class ThreadAnalyzer extends ListenerAdapter {
     }
   }
 
-  /*public void reorder(ThreadInfo ti) {
-    // Sorts the ThreadInfo using comparator
-    Collections.sort(pList, new Priority());
-    System.out.println(" ");
-    for (Priority pr : pList) {   // printing sorted list of priority numbers
-      System.out.print("REORDERED SCHEDULE:    " + pr.getThreadInfo() + "  :  " + pr.getPriorityNum() + ", ");
+  public boolean isNested(Integer instrAttr) {
+    boolean instrNested = false;
+    Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+    for (Integer iKey : nestedKeys) {
+      //System.out.println("===== " + i);
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+      if (iKey.equals(instrAttr)) {
+        //System.out.println("NESTINGS: ");
+        //for (Integer iInSet : nestedSet) {
+          //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+        //}
+        if (nestedSet.isEmpty()) {
+          instrNested = false;
+        }
+        else {
+          instrNested = true;
+        }
+        //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr + "\t T/F? " + instrNested); 
+      }
+      return instrNested;
     }
-  }*/
 
-  /*public void checkSchedule (ThreadInfo[] threads) {
-    // if using thread table, then print from priorirty table - call reorder
-    // else do below:
-    for (int i = 0; i < threads.length; i++) {
-      ThreadInfo ti = threads[i];
-      Instruction insn = ti.getPC();
-      MethodInfo mi = insn.getMethodInfo();
-      System.out.println("OUTPUTTING SCHEDULE... " + ti + "\t" + insn + "\t" + mi + "\t ORDER: " + i);
+    /*for (Integer key : isNestedMapFirst.keySet()) {
+      HashSet<Integer> isNestedSet = isNestedMapFirst.get(key);
+      //System.out.println("KEY: " + key + "\t INSTRUCTION ATTRIBUTE: " + instrAttr);
+      if (key == instrAttr && isNestedSet.contains(instrAttr)) {
+        //System.out.println("Relation holds: True");
+        instrNested = true;
+        break;
+      }
+      else {
+        //System.out.println("Relation holds: False");
+        instrNested = false;
+        break;
+      }
+    }*/
+    return instrNested;
+  }
+
+  public boolean isCrossedAliased(Integer instrAttr) {
+    boolean isCA = false;
+
+    Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+    for (Integer iKey : nestedKeys) {
+      //System.out.println("===== " + i);
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+      if (iKey.equals(instrAttr)) {
+        //System.out.println("NESTINGS: ");
+        for (Integer iInSet : nestedSet) {
+          //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+        }
+      }
+      else {
+
+      }
     }
-  }*/
+
+    return isCA;
+  }
 
   class Priority<ThreadInfo> implements Comparator<ThreadInfo> {
     private ThreadInfo threadInfo;
@@ -563,11 +618,6 @@ public class ThreadAnalyzer extends ListenerAdapter {
       priorTable = pTable;
     }
 
-    /*Priority(ThreadInfo ti, int pNum) {
-      threadInfo = ti;
-      priorityNum = pNum;
-    }*/
-
     public ThreadInfo getThreadInfo() {
       return threadInfo;
     }
@@ -576,21 +626,10 @@ public class ThreadAnalyzer extends ListenerAdapter {
       return priorityNum;
     }
 
-    // Overriding compareTo method
-    /*public int compareTo(ThreadInfo ti) {
-      return (this).compareTo(ti);
-    }*/
-    /*public int compareTo(Priority p) {
-      return (this.threadInfo).compareTo(p.threadInfo);
-    }*/
-
-    // Overriding compare method to sort priority number
+    // Overriding compare method to sort by highest priority number
     public int compare(ThreadInfo t1, ThreadInfo t2) {
       return priorTable.get(t1) - priorTable.get(t2);
     }
-    /*public int compare(Priority p1, Priority p2) {
-      return p1.priorityNum - p2.priorityNum;
-    }*/
   }
 
 }

@@ -1,4 +1,4 @@
-target = TestThread
+target = TestThreadEx
 
 listener=gov.nasa.jpf.listener.ThreadAnalyzer
 
