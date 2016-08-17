@@ -74,6 +74,9 @@ public class ThreadAnalyzer extends ListenerAdapter {
   static HashMap<Integer, HashSet<Integer>> isNestedMapSecond = new HashMap<Integer,HashSet<Integer>>();
   static HashMap<Integer, HashSet<Integer>> isReachableMapFirst = new HashMap<Integer,HashSet<Integer>>();
   static HashMap<Integer, HashSet<Integer>> isReachableMapSecond = new HashMap<Integer,HashSet<Integer>>();
+  static HashMap<Integer, String> lockTypeMap = new HashMap<Integer,String>();
+  //static List<HashSet<Integer>> universeList = new ArrayList<HashSet<Integer>>();
+  static ArrayList<Universe> universeList = new ArrayList<Universe>();
   static HashMap<ThreadInfo, Integer> priorityTable = new HashMap<ThreadInfo, Integer>();
   static List<Priority> pList = new ArrayList<Priority>();
   static boolean changePriorities = true;
@@ -84,8 +87,10 @@ public class ThreadAnalyzer extends ListenerAdapter {
     int line = 0;
     String methodName = "";
     String className = "";
+    String lockType = "";
     HashSet<Integer> isNestedSet = new HashSet<Integer>();
     HashSet<Integer> isReachableSet = new HashSet<Integer>();
+    HashSet<Integer> uSet = new HashSet<Integer>();
     Integer nestedId1 = -1;
     Integer nestedId2 = -1;
     Integer reachableId1 = -1;
@@ -154,11 +159,16 @@ public class ThreadAnalyzer extends ListenerAdapter {
               System.out.println("Class : " + monitorEnterElement.getElementsByTagName("c").item(0).getTextContent());*/
               line = Integer.parseInt(monitorEnterElement.getElementsByTagName("l").item(0).getTextContent());
               methodName = monitorEnterElement.getElementsByTagName("m").item(0).getTextContent();
+              lockType = monitorEnterElement.getElementsByTagName("c").item(0).getTextContent();
               //className = monitorEnterElement.getElementsByTagName("c").item(0).getTextContent();
               //System.out.println("line: " + line + " lineNUM: " + lineNUM + "\t" + "methodName: " + methodName + " methodNAME: " + methodNAME);
               if ( (line == lineNUM) && (methodName.equals(methodNAME)) ) {
                 System.out.println("Assigning attribute ID for monitorenter!!!");
                 attributeID = Integer.parseInt(monitorEnterElement.getAttribute("id"));
+                if (!lockTypeMap.containsKey(attributeID)) {
+                  //System.out.println("Adding to lock type map");
+                  lockTypeMap.put(attributeID, lockType);
+                }
                 return attributeID;
               }
             }
@@ -203,6 +213,15 @@ public class ThreadAnalyzer extends ListenerAdapter {
 
             addToSet(isNestedMapFirst, nestedId1, nestedId2);
             addToSet(isNestedMapSecond, nestedId2, nestedId1);
+
+            /*uSet = new HashSet<Integer>();
+            uSet.add(nestedId1);
+            uSet.add(nestedId2);*/
+            Universe u = new Universe(nestedId1, nestedId2);
+            if (!universeList.contains(u)) {
+              System.out.println("Adding to universe list " + u);
+              universeList.add(u);
+            }
             
             //isNestedSet = new HashSet<Integer>();
             //isNestedSet.add(nestedId1);
@@ -236,6 +255,8 @@ public class ThreadAnalyzer extends ListenerAdapter {
       }
     //System.out.println("isNestedMap: " + isNestedMapFirst);
     //System.out.println("isReachableMap: " + isReachableMap);
+    //System.out.println("UNIVERSE LIST: " + universeList);
+    //System.out.println("LOCK TYPE: " + lockTypeMap);
     return attributeID;
   }
 
@@ -508,11 +529,30 @@ public class ThreadAnalyzer extends ListenerAdapter {
 
       if (changePriorities == true) {
         for (int i = 0; i < threads.length; i++) {
-          Instruction insn = threads[i].getPC();
+          //Instruction insn = threads[i].getPC();
+          Instruction insn = newCG.getInsn();
           if (insn instanceof MONITORENTER) {
+            System.out.println("GET INSN MONITORENTER: " + insn);
             Integer instrAttr = insn.getAttr(Integer.class);
+            //ClassInfo ci = insn.getClassInfo();
             boolean varIsNested = isNested(instrAttr);
-            //boolean varIsCrossedAliased = isCrossedAliased(instrAttr);
+            if (varIsNested == false) {
+              // lower priority of this thread and reorder CG set
+              shiftArray(threads, i);
+              //priorityTable.clear();
+              //priorityTable.put();
+              newCG = newCG.reorder(new Priority(priorityTable));
+            }
+            else if (varIsNested == true) {
+              boolean varIsCrossedAliased = isCrossedAliased(instrAttr);
+              if (varIsCrossedAliased == false) {
+                // lower priority of this thread and reorder CG set
+                shiftArray(threads, i);
+              
+                newCG = newCG.reorder(new Priority(priorityTable));
+              }
+            }
+            
             //  System.out.println("CHANGE PRIORITIES: MONITORENTER!!!!!!! " + insn + "\t" + instrAttr);
             /*if (varIsNested == false || varIsCrossedAliased == false) {
               // lower priority of this thread
@@ -562,51 +602,160 @@ public class ThreadAnalyzer extends ListenerAdapter {
         //}
         if (nestedSet.isEmpty()) {
           instrNested = false;
+          break;
         }
         else {
           instrNested = true;
+          break;
         }
         //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr + "\t T/F? " + instrNested); 
       }
-      return instrNested;
     }
-
-    /*for (Integer key : isNestedMapFirst.keySet()) {
-      HashSet<Integer> isNestedSet = isNestedMapFirst.get(key);
-      //System.out.println("KEY: " + key + "\t INSTRUCTION ATTRIBUTE: " + instrAttr);
-      if (key == instrAttr && isNestedSet.contains(instrAttr)) {
-        //System.out.println("Relation holds: True");
-        instrNested = true;
-        break;
-      }
-      else {
-        //System.out.println("Relation holds: False");
-        instrNested = false;
-        break;
-      }
-    }*/
     return instrNested;
   }
 
   public boolean isCrossedAliased(Integer instrAttr) {
     boolean isCA = false;
+    String lockType1 = "";
+    String lockType2 = "";
+    String lockType3 = "";
+    String lockType4 = "";
+    /*for (HashSet<Integer> u : universeList) {
+    //if (iInSet.equals(u)) {
+      System.out.println("---u: " + u);
+    //}
+    }*/
 
-    Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+    // for all nested (i1, ik) there exists no nested (i3, i4) such that i3.LT = ik.LT && i1.LT = i4.LT
+
+    // i1 --> ik : i1 is the instruction that gets set by the choice generator
+    // for each ik do
+    //    for each (i3, i4) in Universe
+    //        if (i3.LT = ik.LT && i1.LT = i4.LT) return false
+
+    if (instrAttr != null) {
+      // Get hashset (values) of passed in instruction... instrAttr is the key
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(instrAttr);
+      // lockType1 is the hashmap key
+      lockType1 = lockTypeMap.get(instrAttr);
+      if (nestedSet != null) {
+        // Iterate through hashset
+        for (Integer iInNestedSet : nestedSet) {
+          //System.out.println("iInNestedSet: " + iInNestedSet);
+          lockType2 = lockTypeMap.get(iInNestedSet);
+          //for (HashSet<Integer> uSet : universeList) {
+            //for (Integer u : uSet) {
+              //System.out.println("---U= " + u + "\t" + uSet);
+              //String lockType3 = lockTypeMap.get(u);
+              //String lockType4 = lockTypeMap.get(j);
+
+              //System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
+              //for (Integer u2 : uSet) {
+                //String lockType3 = lockTypeMap.get(u1);
+                //String lockType4 = lockTypeMap.get(u2);
+                //System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + " (u1) " + u1 + "\t" + lockType4 + "\t (u2) " + u2);
+              //}
+              
+            //}
+            // Iterate through universe set
+            for (Universe uni : universeList) {
+              //Integer l3 = uni.u1;
+              //Integer l4 = uni.u2;
+              //System.out.println("l3: " + l3 + "\t l4: " + l4);
+              lockType3 = lockTypeMap.get(uni.u1);
+              lockType4 = lockTypeMap.get(uni.u2);
+
+              System.out.println();
+              System.out.println("Checking " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
+              System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
+              if ( (lockType3.equals(lockType2)) && (lockType1.equals(lockType4)) ) {
+                isCA = true;
+                break;
+              }
+              else {
+                isCA = false;
+              }
+            }
+          }
+        }
+      }
+    //}
+
+
+
+    /*for (HashSet<Integer> uSet : universeList) {
+      for (Integer u : uSet) {
+        //System.out.println("USET: " + u + "\t" + uSet);
+        if (instrAttr.equals(u)) {
+          System.out.println("u: " + u + "\t USET: " + uSet);
+        }
+      }
+    }*/
+
+
+
+
+
+    /*Set<Integer> nestedKeys = isNestedMapFirst.keySet();
     for (Integer iKey : nestedKeys) {
       //System.out.println("===== " + i);
       HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
       if (iKey.equals(instrAttr)) {
         //System.out.println("NESTINGS: ");
-        for (Integer iInSet : nestedSet) {
-          //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+        for (Integer iInNestedSet : nestedSet) {
+          //System.out.println("###SET: " + iInNestedSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+          //for (HashSet<Integer> uSet : universeList) {
+            // if (i3.lockType = iInNestedSet.lockType && i1.lockType = i4.lockType) return false
+
+          //}
+          for (HashSet<Integer> uSet : universeList) {
+            for (Integer u : uSet) {
+              System.out.println("USET: " + u + "\t" + uSet);
+            }
+          }
         }
       }
-      else {
-
-      }
-    }
+    }*/
 
     return isCA;
+  }
+
+
+  /*public void shiftArray(int array[], int idx) {
+    // get last index of array
+    int lastIndex = array.length - 1; 
+    // save first element
+    //int oldFirst = array[0]; 
+    int oldFirst = array[idx];
+
+    // copy the elements from right to left
+    for (int i = oldFirst-1; i < lastIndex; i++) {
+      array[i] = array[i + 1];
+    }
+
+    // put the selected element last
+    array[lastIndex] = oldFirst;
+  }*/
+
+  public void shiftArray(ThreadInfo ti[], int idx) {
+    // get last index of array
+    int lastIndex = ti.length - 1; 
+    // save first element
+    //int oldFirst = ti[idx];
+    ThreadInfo oldFirst = ti[idx];
+
+    // copy the elements from right to left
+    for (int i = idx; i < lastIndex; i++) {
+      ti[i] = ti[i + 1];
+    }
+
+    // put the selected element last
+    ti[lastIndex] = oldFirst;
+
+    /*priorityTable.clear();
+    for (int i = 0; i < ti.length; i++) {
+      priorityTable.put(ti[i], i);
+    }*/
   }
 
   class Priority<ThreadInfo> implements Comparator<ThreadInfo> {
@@ -629,6 +778,30 @@ public class ThreadAnalyzer extends ListenerAdapter {
     // Overriding compare method to sort by highest priority number
     public int compare(ThreadInfo t1, ThreadInfo t2) {
       return priorTable.get(t1) - priorTable.get(t2);
+    }
+  }
+
+  class Universe {
+    Integer u1;
+    Integer u2;
+
+    public Universe(Integer pU1, Integer pU2) {
+      u1 = pU1;
+      u2 = pU2;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if(o instanceof Universe) {
+        Universe toCompare = (Universe) o;
+        return this.u1.equals(toCompare.u1) && this.u2.equals(toCompare.u2);
+      }
+      return false;
+    }
+    
+    @Override
+    public int hashCode() {
+      return 1;
     }
   }
 
