@@ -16,6 +16,8 @@ public class Query {
   static HashMap<Integer, HashSet<Integer>> isNestedMapSecond = new HashMap<Integer,HashSet<Integer>>();
   static HashMap<Integer, HashSet<Integer>> isReachableMapFirst = new HashMap<Integer,HashSet<Integer>>();
   static HashMap<Integer, HashSet<Integer>> isReachableMapSecond = new HashMap<Integer,HashSet<Integer>>();
+  static ArrayList<Universe> universeList = new ArrayList<Universe>();
+  static HashMap<Integer, String> lockTypeMap = new HashMap<Integer,String>();
 
   public static void main(String args[]) {
   	Scanner scanner = new Scanner(System.in);
@@ -59,9 +61,9 @@ public class Query {
 	  	}
 
 	  	else if (choice == 3) {
-			int nestedSearchId1 = scanner.nextInt();
-			int nestedSearchId2 = scanner.nextInt();
-		  	for (Integer key : isNestedMapFirst.keySet()) {
+			//int nestedSearchId1 = scanner.nextInt();
+			//int nestedSearchId2 = scanner.nextInt();
+		  	/*for (Integer key : isNestedMapFirst.keySet()) {
 		  		HashSet<Integer> isNestedSet = isNestedMapFirst.get(key);
 		  		if (key == nestedSearchId1 && isNestedSet.contains(nestedSearchId2)) {
 		  			System.out.println("Relation holds: True");
@@ -71,11 +73,17 @@ public class Query {
 		  			System.out.println("Relation holds: False");
 		  			break;
 		  		}
-		  	}
+		  	}*/
+        System.out.println();
+        boolean n = isNested(300);
+        System.out.println("isNested: " + n);
+        System.out.println();
+        boolean c = isCrossedAliased(300);
+        System.out.println("isCrossedAliased: " + c);
 	  	}
 
 	  	else if (choice == 4) {
-	  	int reachableSearchId1 = scanner.nextInt();
+	  		int reachableSearchId1 = scanner.nextInt();
 			int reachableSearchId2 = scanner.nextInt();
 		  	for (Integer key : isReachableMapFirst.keySet()) {
 		  		HashSet<Integer> isReachableSet = isReachableMapFirst.get(key);
@@ -98,6 +106,7 @@ public class Query {
     int line = 0;
     String methodName = "";
     String className = "";
+    String lockType = "";
     HashSet<Integer> isNestedSet = new HashSet<Integer>();
     HashSet<Integer> isReachableSet = new HashSet<Integer>();
     Integer nestedId1 = -1;
@@ -168,14 +177,19 @@ public class Query {
               System.out.println("Class : " + monitorEnterElement.getElementsByTagName("c").item(0).getTextContent());*/
               line = Integer.parseInt(monitorEnterElement.getElementsByTagName("l").item(0).getTextContent());
               methodName = monitorEnterElement.getElementsByTagName("m").item(0).getTextContent();
+              lockType = monitorEnterElement.getElementsByTagName("c").item(0).getTextContent();
               //className = monitorEnterElement.getElementsByTagName("c").item(0).getTextContent();
               //System.out.println("line: " + line + " lineNUM: " + lineNUM + "\t" + "methodName: " + methodName + " methodNAME: " + methodNAME);
               //if ( (line == lineNUM) && (methodName.equals(methodNAME)) ) {
                 System.out.println("Assigning attribute ID for monitorenter!!!");
                 attributeID = Integer.parseInt(monitorEnterElement.getAttribute("id"));
+                if (!lockTypeMap.containsKey(attributeID)) {
+                  //System.out.println("Adding to lock type map");
+                  lockTypeMap.put(attributeID, lockType);
+                }
                 //return attributeID;
-              //}
-            }
+              }
+            //}
           //}
 
           //else if (mode.equals("isAMethodInvoke")) {
@@ -217,6 +231,12 @@ public class Query {
 
             addToSet(isNestedMapFirst, nestedId1, nestedId2);
             addToSet(isNestedMapSecond, nestedId2, nestedId1);
+
+            Universe u = new Universe(nestedId1, nestedId2);
+            if (!universeList.contains(u)) {
+              System.out.println("Adding to universe list " + u);
+              universeList.add(u);
+            }
             
             //isNestedSet = new HashSet<Integer>();
             //isNestedSet.add(nestedId1);
@@ -265,5 +285,106 @@ public class Query {
     set.add(value);
     oneToMany.put(key, set);
     //return result;
+  }
+
+  public static boolean isNested(Integer instrAttr) {
+    boolean instrNested = false;
+    Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+    for (Integer iKey : nestedKeys) {
+      //System.out.println("===== " + i);
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+      if (iKey.equals(instrAttr)) {
+        //System.out.println("NESTINGS: ");
+        //for (Integer iInSet : nestedSet) {
+          //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+        //}
+        if (nestedSet.isEmpty()) {
+          instrNested = false;
+          break;
+        }
+        else {
+          instrNested = true;
+          break;
+        }
+        //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr + "\t T/F? " + instrNested); 
+      }
+    }
+    return instrNested;
+  }
+
+    public static boolean isCrossedAliased(Integer instrAttr) {
+      boolean isCA = false;
+      String lockType1 = "";
+      String lockType2 = "";
+      String lockType3 = "";
+      String lockType4 = "";
+      /*for (HashSet<Integer> u : universeList) {
+      //if (iInSet.equals(u)) {
+        System.out.println("---u: " + u);
+      //}
+      }*/
+
+      // for all nested (i1, ik) there exists no nested (i3, i4) such that i3.LT = ik.LT && i1.LT = i4.LT
+
+      // i1 --> ik : i1 is the instruction that gets set by the choice generator
+      // for each ik do
+      //    for each (i3, i4) in Universe
+      //        if (i3.LT = ik.LT && i1.LT = i4.LT) return false
+
+      if (instrAttr != null) {
+        // Get hashset (values) of passed in instruction... instrAttr is the key
+        HashSet<Integer> nestedSet = isNestedMapFirst.get(instrAttr);
+        // lockType1 is the hashmap key
+        lockType1 = lockTypeMap.get(instrAttr);
+        if (nestedSet != null) {
+          // Iterate through hashset
+          for (Integer iInNestedSet : nestedSet) {
+            //System.out.println("iInNestedSet: " + iInNestedSet);
+            lockType2 = lockTypeMap.get(iInNestedSet);
+              // Iterate through universe set
+              for (Universe uni : universeList) {
+                lockType3 = lockTypeMap.get(uni.u1);
+                lockType4 = lockTypeMap.get(uni.u2);
+
+                System.out.println();
+                System.out.println("Checking " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
+                System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
+                if ( (lockType3.equals(lockType2)) && (lockType1.equals(lockType4)) ) {
+                  isCA = true;
+                  //System.out.println("TRUE LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4 + "\t" + isCA);
+                  break;
+                }
+                else {
+                  isCA = false;
+                }
+              }
+            }
+          }
+        }
+        return isCA;
+  }
+
+  static class Universe {
+    Integer u1;
+    Integer u2;
+
+    public Universe(Integer pU1, Integer pU2) {
+      u1 = pU1;
+      u2 = pU2;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if(o instanceof Universe) {
+        Universe toCompare = (Universe) o;
+        return this.u1.equals(toCompare.u1) && this.u2.equals(toCompare.u2);
+      }
+      return false;
+    }
+    
+    @Override
+    public int hashCode() {
+      return 1;
+    }
   }
 }
