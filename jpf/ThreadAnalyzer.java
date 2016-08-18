@@ -610,10 +610,10 @@ public class ThreadAnalyzer extends ListenerAdapter {
 
       if (changePriorities == true) {
         for (int i = 0; i < threads.length; i++) {
-          Instruction insn = threads[i].getPC();
-          //Instruction insn = newCG.getInsn();
+          //Instruction insn = threads[i].getPC();
+          Instruction insn = newCG.getInsn();
           if (insn instanceof MONITORENTER) {
-            System.out.println("GET INSN MONITORENTER: " + insn);
+            System.out.println("GET INSN MONITORENTER: " + insn + "\t" + insn.getLineNumber());
             Integer instrAttr = insn.getAttr(Integer.class);
             //ClassInfo ci = insn.getClassInfo();
             System.out.println("CURRENT P TABLE: " + priorityTable);
@@ -746,7 +746,7 @@ public class ThreadAnalyzer extends ListenerAdapter {
       ThreadInfo tKey = entry.getKey();
       if (pValue > startShiftVal) {
         Integer newPValue = pValue - 1;
-        System.out.println("Lowering priority and entering: " + entry.getKey() + "," + newPValue);
+        System.out.println("Lowering priority and changing to: " + entry.getKey() + "," + newPValue);
         priorityTable.put(tKey, newPValue);
       }
     }
