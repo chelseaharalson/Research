@@ -613,25 +613,60 @@ public class ThreadAnalyzer extends ListenerAdapter {
           //Instruction insn = threads[i].getPC();
           Instruction insn = newCG.getInsn();
           if (insn instanceof MONITORENTER) {
-            System.out.println("GET INSN MONITORENTER: " + insn + "\t" + insn.getLineNumber());
+            //System.out.println("GET INSN MONITORENTER: " + insn + "\t" + insn.getLineNumber());
             Integer instrAttr = insn.getAttr(Integer.class);
             //ClassInfo ci = insn.getClassInfo();
             System.out.println("CURRENT P TABLE: " + priorityTable);
-            boolean varIsNested = isNested(instrAttr);
-            boolean varIsCrossedAliased = isCrossedAliased(instrAttr);
-            if (varIsNested == false || varIsCrossedAliased == false) {
-              // lower priority of this thread and reorder CG set
-              System.out.println("Lowering priority of thread " + threads[i]);
-              lowerPriority(threads[i]);
-              newCG = newCG.reorder(new Priority(priorityTable));
-              //System.out.println("---------------PTABLE: " + priorityTable);
-            }
 
-            /*boolean varIsCrossedAliased = isCrossedAliased(instrAttr);
-            if (varIsCrossedAliased == false) {
-              // lower priority of this thread and reorder CG set
-              //newCG = newCG.reorder(new Priority(priorityTable));
-            }*/
+            //boolean existsInHM = existsInNestedHashmap(instrAttr);
+            //if (existsInHM == true) {
+              //boolean varIsNested = isNested(instrAttr);
+              //boolean varIsCrossedAliased = isCrossedAliased(instrAttr);
+              //boolean varIsReverseCrossedAliased = isReverseCrossedAliased(instrAttr);
+
+              //boolean existsInHM = existsInNestedHashmap(instrAttr);
+              //boolean varIsNested = isNested(instrAttr, existsInHM);
+              //boolean varIsReverseNested = isReverseNested(instrAttr, existsInHM);
+
+              //boolean varIsNestedEnclosedBy = isNestedEnclosedBy(instrAttr);
+              //boolean varIsNestedEnclosing = isNestedEnclosing(instrAttr);
+
+              /*if (existsInHM == false) {
+                boolean varNestedEnclosed = checkEnclosedNested(instrAttr);
+              }*/
+
+              /*if (insn.getLineNumber() == 47) {
+                System.out.println("---47ISNESTEDENCLOSEDBY: " + varIsNestedEnclosedBy + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISCROSSEDALIASED: " + varIsCrossedAliased + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISNESTEDENCLOSING: " + varIsNestedEnclosing + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISREVERSECROSSEDALIASED: " + varIsReverseCrossedAliased + "\t INSTR ATTR: " + instrAttr);
+                //System.out.println("---EXISTS IN HM: " + existsInHM);
+              }
+              if (insn.getLineNumber() == 61) {
+                System.out.println("---61ISNESTEDENCLOSEDBY: " + varIsNestedEnclosedBy + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISCROSSEDALIASED: " + varIsCrossedAliased + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISNESTEDENCLOSING: " + varIsNestedEnclosing + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISREVERSECROSSEDALIASED: " + varIsReverseCrossedAliased + "\t INSTR ATTR: " + instrAttr);
+                //System.out.println("---EXISTS IN HM: " + existsInHM);
+              }
+              if (insn.getLineNumber() == 75) {
+                System.out.println("---75ISNESTEDENCLOSEDBY: " + varIsNestedEnclosedBy + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISCROSSEDALIASED: " + varIsCrossedAliased + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISNESTEDENCLOSING: " + varIsNestedEnclosing + "\t INSTR ATTR: " + instrAttr);
+                System.out.println("---ISREVERSECROSSEDALIASED: " + varIsReverseCrossedAliased + "\t INSTR ATTR: " + instrAttr);
+                //System.out.println("---EXISTS IN HM: " + existsInHM);
+              }*/
+
+              boolean cond1 = isNestedEnclosedBy(instrAttr);
+
+              if (!cond1) {
+              //if ( (varIsNestedEnclosedBy == false && varIsCrossedAliased == false) || (varIsNestedEnclosing == false && varIsReverseCrossedAliased == false) ) {
+                // lower priority of this thread and reorder CG set
+                System.out.println("Lowering priority of thread " + threads[i] + " and " + insn + "\t" + insn.getLineNumber());
+                lowerPriority(threads[i]);
+                newCG = newCG.reorder(new Priority(priorityTable));
+              }
+            //}
           }
         }
         //System.out.println("Reordering...");
@@ -659,17 +694,51 @@ public class ThreadAnalyzer extends ListenerAdapter {
     }
   }
 
-  public boolean isNested(Integer instrAttr) {
+  public boolean isNestedEnclosedBy(Integer instrAttr1) {
+    // i0
+    //  i1 (instrAttr)
+    // Iterate through hashmap by value and find key
+    //boolean instrNested = false;
+
+    for (Map.Entry<Integer, HashSet<Integer>> entry : isNestedMapFirst.entrySet()) {
+      boolean found = false;
+      //Integer key = entry.getKey();
+      HashSet<Integer> valueSet = entry.getValue();
+      //System.out.println("Key: " + key + "\t Values: " + value);
+      //HashSet<Integer> nestedSet = isNestedMapFirst.get(instrAttr);
+      //System.out.println("Key: " + key + "\t Values: " + valueSet);
+
+      for (Integer v : valueSet) {
+        if (v.equals(instrAttr1)) {
+          Integer instrAttr0 = entry.getKey();
+          for (Universe uni : universeList) {
+            Integer instrAttr3 = uni.u1;
+            Integer instrAttr4 = uni.u2;
+            boolean isCA = isCrossedAliased(instrAttr0, instrAttr1, instrAttr3, instrAttr4);
+            if (isCA == true) {
+              found = true;
+              break;
+            }
+          }
+          if (found == true) {
+            //instrNested = true;
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  public boolean isNestedEnclosing(Integer instrAttr) {
+    //  i1 (instrAttr)
+    //    i0
+    // Iterate through hashmap by key and find value
     boolean instrNested = false;
     Set<Integer> nestedKeys = isNestedMapFirst.keySet();
     for (Integer iKey : nestedKeys) {
-      //System.out.println("===== " + i);
       HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
       if (iKey.equals(instrAttr)) {
-        //System.out.println("NESTINGS: ");
-        //for (Integer iInSet : nestedSet) {
-          //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
-        //}
         if (nestedSet.isEmpty()) {
           instrNested = false;
           break;
@@ -678,13 +747,308 @@ public class ThreadAnalyzer extends ListenerAdapter {
           instrNested = true;
           break;
         }
-        //System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr + "\t T/F? " + instrNested); 
       }
     }
     return instrNested;
   }
 
-  public boolean isCrossedAliased(Integer instrAttr) {
+  public boolean isCrossedAliased(Integer instrAttr0, Integer instrAttr1, Integer instrAttr3, Integer instrAttr4) {
+    //boolean isCA = false;
+    String lockType0 = "";
+    String lockType1 = "";
+    String lockType3 = "";
+    String lockType4 = "";
+
+    // for all nested (i1, ik) there exists no nested (i3, i4) such that i3.LT = ik.LT && i1.LT = i4.LT
+
+    // i1 --> ik : i1 is the instruction that gets set by the choice generator
+    // for each ik do
+    //    for each (i3, i4) in Universe
+    //        if (i3.LT = ik.LT && i1.LT = i4.LT) return false
+
+    lockType0 = lockTypeMap.get(instrAttr0);
+    lockType1 = lockTypeMap.get(instrAttr1);
+    lockType3 = lockTypeMap.get(instrAttr3);
+    lockType4 = lockTypeMap.get(instrAttr4);
+
+    if ( (instrAttr0 != instrAttr3 && instrAttr1 != instrAttr4) ) {
+      if ( (lockType0.equals(lockType4)) && (lockType1.equals(lockType3)) ) {
+        System.out.println();
+        System.out.println("Checking cross aliased: " + instrAttr0 + "," + instrAttr1 + "\t " + instrAttr3 + "," + instrAttr4);
+        System.out.println("LOCK TYPES: " + lockType0 + "\t" + lockType1 + "\t" + lockType3 + "\t" + lockType4);
+        return true;
+        //isCA = true;
+        //break;
+      }
+      /*else {
+        isCA = false;
+      }*/
+    }
+
+
+    /*for (Universe uni : universeList) {
+      lockType3 = lockTypeMap.get(uni.u1);
+      lockType4 = lockTypeMap.get(uni.u2);
+
+      if ( (instrAttr != uni.u1 && iInNestedSet != uni.u2) /*|| (instrAttr != uni.u2 && iInNestedSet != uni.u1)*/ //) {
+        /*if ( (lockType0.equals(lockType4)) && (lockType1.equals(lockType3)) ) {
+          System.out.println();
+          System.out.println("Checking cross aliased: " + instrAttr0 + "," + instrAttr1 + "\t " + uni.u1 + "," + uni.u2);
+          System.out.println("LOCK TYPES: " + lockType0 + "\t" + lockType1 + "\t" + lockType3 + "\t" + lockType4);
+          isCA = true;
+          break;
+        }
+        else {
+          isCA = false;
+        }
+      }
+    }*/
+
+    return false;
+  }
+
+  /*public boolean existsInNestedHashmap(Integer instrAttr) {
+    boolean exists = false;
+    HashSet<Integer> nestedValues = isNestedMapFirst.get(instrAttr);
+    if (nestedValues != null) {
+      exists = true;
+    }
+    else {
+      exists = false;
+    }
+    //System.out.println("EXISTS?? " + instrAttr + "\t" + exists);
+    return exists;
+  }
+
+  public boolean isNested(Integer instrAttr, boolean existsInHM) {
+    boolean instrNested = false;
+    if (existsInHM == true) {
+      Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+      for (Integer iKey : nestedKeys) {
+        HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+        if (iKey.equals(instrAttr)) {
+          if (nestedSet.isEmpty()) {
+            instrNested = false;
+            break;
+          }
+          else {
+            instrNested = true;
+            break;
+          }
+        }
+      }
+    }
+    else if (existsInHM == false) {
+      boolean varNestedEnclosed = checkEnclosedNested(instrAttr);
+      if (varNestedEnclosed = true) {
+        instrNested = true;
+      }
+      else if (varNestedEnclosed = false) {
+        instrNested = false;
+      }
+    }
+    return instrNested;
+  }
+
+  public boolean checkEnclosedNested(Integer instrAttr) {
+    boolean instrNested = false;
+    Set<Integer> nestedKeys = isNestedMapSecond.keySet();
+    for (Integer iKey : nestedKeys) {
+      HashSet<Integer> nestedSet = isNestedMapSecond.get(iKey);
+      if (iKey.equals(instrAttr)) {
+        if (nestedSet.isEmpty()) {
+          instrNested = false;
+          break;
+        }
+        else {
+          instrNested = true;
+          break;
+        }
+      }
+    }
+    return instrNested;
+  }
+
+  public boolean checkReverseEnclosedNested(Integer instrAttr) {
+    boolean instrNested = false;
+    Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+    for (Integer iKey : nestedKeys) {
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+      if (iKey.equals(instrAttr)) {
+        if (nestedSet.isEmpty()) {
+          instrNested = false;
+          break;
+        }
+        else {
+          instrNested = true;
+          break;
+        }
+      }
+    }
+    return instrNested;
+  }
+
+  public boolean isReverseNested(Integer instrAttr, boolean existsInHM) {
+    boolean instrNested = false;
+    if (existsInHM == true) {
+      Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+      for (Integer iKey : nestedKeys) {
+        HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+        if (iKey.equals(instrAttr)) {
+          for (Integer iInSet : nestedSet) {
+            System.out.println("###SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+            HashSet<Integer> nestedReverseSet = isNestedMapFirst.get(iInSet);
+            if (nestedReverseSet != null) {
+              System.out.println("@@@REVERSE SET: " + nestedReverseSet + "\t" + "REVERSE KEY: " + iInSet + "\t INSTR ATTR: " + instrAttr); 
+              for (Integer nInSet : nestedReverseSet) {
+                System.out.println("REVERSE NESTED CHECKING " + instrAttr + "," + nestedSet + " to " + iInSet + "," + nestedReverseSet);
+                if (nestedReverseSet.isEmpty()) {
+                  instrNested = false;
+                  break;
+                }
+                else {
+                  instrNested = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    else if (existsInHM == false) {
+      Set<Integer> nestedKeys = isNestedMapSecond.keySet();
+      for (Integer iKey : nestedKeys) {
+        HashSet<Integer> nestedSet = isNestedMapSecond.get(iKey);
+        if (iKey.equals(instrAttr)) {
+          for (Integer iInSet : nestedSet) {
+            System.out.println("###FALSE SET: " + iInSet + "\t" + "iKey: " + iKey + "\t INSTR ATTR: " + instrAttr); 
+            HashSet<Integer> nestedReverseSet = isNestedMapFirst.get(iInSet);
+            if (nestedReverseSet != null) {
+              System.out.println("@@@FALSE REVERSE SET: " + nestedReverseSet + "\t" + "REVERSE KEY: " + iInSet + "\t INSTR ATTR: " + instrAttr); 
+              for (Integer nInSet : nestedReverseSet) {
+                System.out.println("FALSE REVERSE NESTED CHECKING " + instrAttr + "," + nestedSet + " to " + iInSet + "," + nestedReverseSet);
+                if (nestedReverseSet.isEmpty()) {
+                  instrNested = false;
+                  break;
+                }
+                else {
+                  instrNested = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return instrNested;
+  }*/
+
+  /*public boolean isNestedEnclosedBy(Integer instrAttr) {
+    // i0
+    //  i1 (instrAttr)
+    // Iterate through hashmap by value and find key
+    boolean instrNested = false;
+
+    for (Map.Entry<Integer, HashSet<Integer>> entry : isNestedMapFirst.entrySet()) {
+      //Integer key = entry.getKey();
+      HashSet<Integer> valueSet = entry.getValue();
+      //System.out.println("Key: " + key + "\t Values: " + value);
+      //HashSet<Integer> nestedSet = isNestedMapFirst.get(instrAttr);
+      //System.out.println("Key: " + key + "\t Values: " + valueSet);
+
+      for (Integer v : valueSet) {
+        if (v.equals(instrAttr)) {
+          Integer testKey = entry.getKey();
+          //System.out.println("Test Key: " + testKey + "\t Values: " + valueSet);
+          if (testKey != null) {
+            instrNested = true;
+            break;
+          }
+        }
+      }
+    }
+    return instrNested;
+  }
+
+  public boolean isNestedEnclosing(Integer instrAttr) {
+    //  i1 (instrAttr)
+    //    i0
+    // Iterate through hashmap by key and find value
+    boolean instrNested = false;
+    Set<Integer> nestedKeys = isNestedMapFirst.keySet();
+    for (Integer iKey : nestedKeys) {
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(iKey);
+      if (iKey.equals(instrAttr)) {
+        if (nestedSet.isEmpty()) {
+          instrNested = false;
+          break;
+        }
+        else {
+          instrNested = true;
+          break;
+        }
+      }
+    }
+    return instrNested;
+  }*/
+
+  /*public boolean isCrossedAliased(Integer instrAttr) {
+    boolean isCA = false;
+    String lockType1 = "";
+    String lockType2 = "";
+    String lockType3 = "";
+    String lockType4 = "";
+
+    // for all nested (i1, ik) there exists no nested (i3, i4) such that i3.LT = ik.LT && i1.LT = i4.LT
+
+    // i1 --> ik : i1 is the instruction that gets set by the choice generator
+    // for each ik do
+    //    for each (i3, i4) in Universe
+    //        if (i3.LT = ik.LT && i1.LT = i4.LT) return false
+
+    if (instrAttr != null) {
+      // Get hashset (values) of passed in instruction... instrAttr is the key
+      HashSet<Integer> nestedSet = isNestedMapFirst.get(instrAttr);
+      // lockType1 is the hashmap key
+      lockType1 = lockTypeMap.get(instrAttr);
+      if (nestedSet != null) {
+        // Iterate through hashset
+        for (Integer iInNestedSet : nestedSet) {
+          //System.out.println("iInNestedSet: " + iInNestedSet + "\t" + instrAttr);
+          lockType2 = lockTypeMap.get(iInNestedSet);
+            // Iterate through universe set
+            for (Universe uni : universeList) {
+              /*Integer l3 = uni.u1;
+              Integer l4 = uni.u2;
+              System.out.println("l3: " + l3 + "\t l4: " + l4);*/
+              /*lockType3 = lockTypeMap.get(uni.u1);
+              lockType4 = lockTypeMap.get(uni.u2);
+
+              if ( (instrAttr != uni.u1 && iInNestedSet != uni.u2) /*|| (instrAttr != uni.u2 && iInNestedSet != uni.u1)*/ //) {
+                //System.out.println();
+                //System.out.println("Checking " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
+                //System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
+                /*if ( (lockType3.equals(lockType2)) && (lockType1.equals(lockType4)) ) {
+                  System.out.println();
+                  System.out.println("Checking cross aliased: " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
+                  System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
+                  isCA = true;
+                  break;
+                }
+                else {
+                  isCA = false;
+                }
+              }
+            }
+          }
+        }
+      }
+    return isCA;
+  }*/
+
+  /*public boolean isReverseCrossedAliased(Integer instrAttr) {
     boolean isCA = false;
     String lockType1 = "";
     String lockType2 = "";
@@ -713,21 +1077,30 @@ public class ThreadAnalyzer extends ListenerAdapter {
               /*Integer l3 = uni.u1;
               Integer l4 = uni.u2;
               System.out.println("l3: " + l3 + "\t l4: " + l4);*/
-              lockType3 = lockTypeMap.get(uni.u1);
+              /*lockType3 = lockTypeMap.get(uni.u1);
               lockType4 = lockTypeMap.get(uni.u2);
 
-              if ( (instrAttr != uni.u1 && iInNestedSet != uni.u2) /*|| (instrAttr != uni.u2 && iInNestedSet != uni.u1)*/ ) {
+              if ( (instrAttr != uni.u1 && iInNestedSet != uni.u2) /*|| (instrAttr != uni.u2 && iInNestedSet != uni.u1)*/ //) {
                 //System.out.println();
                 //System.out.println("Checking " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
                 //System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
-                if ( (lockType3.equals(lockType2)) && (lockType1.equals(lockType4)) ) {
+                /*if ( (lockType3.equals(lockType2)) && (lockType1.equals(lockType4)) ) {
                   System.out.println();
                   System.out.println("Checking " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
                   System.out.println("LOCK TYPES: " + lockType1 + "\t" + lockType2 + "\t" + lockType3 + "\t" + lockType4);
                   isCA = true;
                   break;
+                }*/
+                // checking reverse
+                /*if ( (lockType3.equals(lockType1)) && (lockType2.equals(lockType4)) ) {
+                  System.out.println();
+                  System.out.println("Checking reverse cross aliased: " + iInNestedSet + "," + instrAttr + "\t " + uni.u1 + "," + uni.u2);
+                  System.out.println("LOCK TYPES: " + lockType2 + "\t" + lockType1 + "\t" + lockType3 + "\t" + lockType4);
+                  isCA = true;
+                  break;
                 }
                 else {
+                  //System.out.println("WHY IS THIS FALSE: " + instrAttr + "," + iInNestedSet + "\t " + uni.u1 + "," + uni.u2);
                   isCA = false;
                 }
               }
@@ -735,8 +1108,9 @@ public class ThreadAnalyzer extends ListenerAdapter {
           }
         }
       }
+    //System.out.println("isReverseCA: " + isCA + "\t" + instrAttr);
     return isCA;
-  }
+  }*/
 
   public void lowerPriority(ThreadInfo ti) {
     Integer startShiftVal = priorityTable.get(ti);
