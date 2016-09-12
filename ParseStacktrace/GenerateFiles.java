@@ -138,8 +138,8 @@ public class GenerateFiles {
         if (versionNumber == null)
           throw new Exception("Version number must be provided!");
         
-        //folderPath = "/home/chelsea/Dropbox/Documents/Research/GenerateLockTypes/" + projectName + "/";
-        folderPath = "/Users/chelseametcalf/Dropbox/Documents/Research/AliasedLockOrder/" + projectName + "/";
+        folderPath = "/home/chelsea/Dropbox/Documents/Research/AliasedLockOrder/" + projectName + "/";
+        //folderPath = "/Users/chelseametcalf/Dropbox/Documents/Research/AliasedLockOrder/" + projectName + "/";
         stackTraceFileName = folderPath + "stacktrace.txt";
         
         pType = p.getProperty("pointerAnalysis"); 
@@ -157,7 +157,7 @@ public class GenerateFiles {
         generateScopeFileLinux(projectName, versionNumber);
         //String scopeFile = getScopeFile(projectName, versionNumber);
         // change back to scope.txt when on linux computer
-        String scopeFile = folderPath + "scope-mac.txt";
+        String scopeFile = folderPath + "scope.txt";
         System.out.println("SCOPE FILE: " + scopeFile);
         
         getEntryClasses(stackTraceFileName);
@@ -243,10 +243,7 @@ public class GenerateFiles {
         }*/
         
         getWaitingToLock(stackTraceFileName);
-        getRelevantStackTraceLines2(projectName, stackTraceFileName);
-        
         getRelevantStackTraceLines(projectName, stackTraceFileName);
-        
     }
     
     public static void getEntryClasses(String fileName) {
@@ -310,7 +307,7 @@ public class GenerateFiles {
         
         //String folder = "/home/chelsea/Dropbox/Documents/Research/GenerateLockTypes/" + projectName + "/";
         //String folder = "/Users/chelseametcalf/Dropbox/Documents/Research/AliasedLockOrder/" + projectName + "/";
-        FileWriter writer = new FileWriter(folderPath + "run-linux2.txt");
+        FileWriter writer = new FileWriter(folderPath + "run.txt");
         writer.append(run);
         writer.close();
     }
@@ -324,12 +321,12 @@ public class GenerateFiles {
         
         //String folder = "/home/chelsea/Dropbox/Documents/Research/GenerateLockTypes/" + projectName + "/";
         //String folder = "/Users/chelseametcalf/Dropbox/Documents/Research/AliasedLockOrder/" + projectName + "/";
-        FileWriter writer = new FileWriter(folderPath + "scope2.txt");
+        FileWriter writer = new FileWriter(folderPath + "scope.txt");
         writer.append(scope);
         writer.close();
     }
     
-    public static void getRelevantStackTraceLines2(String projectName, String fileName) {
+    public static void getRelevantStackTraceLines(String projectName, String fileName) {
       ArrayList<String> encInfo = new ArrayList<String>();
       int lineCount = getNumberOfLines(fileName);
       String enclosedClass = "";
@@ -352,54 +349,59 @@ public class GenerateFiles {
                   //System.out.println("Adding " + currentLine + " to encInfo");
                   encInfo.add(currentLine.trim());
                   i++;
-                  //for (int i = 0; i < waitingToLockList.size(); i++) {
-                    if ( (sectionStackTrace == 1) && (currentLine.trim().contains("locked") && currentLine.trim().contains(waitingToLockList.get(1))) ) {
-                      System.out.println("SECTION OF STACKTRACE: " + sectionStackTrace + "\t" + currentLine);
-                      break st;
-                    }
-                    else if ( (sectionStackTrace == 2) && (currentLine.trim().contains("locked") && currentLine.trim().contains(waitingToLockList.get(0))) ) {
-                      System.out.println("SECTION OF STACKTRACE: " + sectionStackTrace + "\t" + currentLine);
-                      break st;
-                    }
-                  //}
-                    //encInfo.clear();
-                    //break;
-                }
-                
-                
-                
-                  /*int i = 0;
-                  while (((currentLine = bufferedReader.readLine()) != null) && i < lineCount) {
-                      //System.out.println("Adding " + currentLine + " to encInfo");
-                      encInfo.add(currentLine.trim());
-                      i++;
-                      if (currentLine.trim().contains("locked")) {
-                          //System.out.println("ENC INFO: " + encInfo);
-                          int lineAboveLockedLine = 0;
-                          for (int j = 0; j < encInfo.size(); j++) {
-                              if (j == 0) {
-                                  enclosedMethod = returnMethod(encInfo.get(j));
-                              }
-                              if (j == 1) {
-                                  enclosedLockType = returnLockType(encInfo.get(j));
-                              }
-                              if (j == 2) {
-                                  enclosedMethodThatCallsMethod = returnMethod(encInfo.get(j));
-                                  enclosedClass = returnClass(encInfo.get(j));
-                              }
-                              if (encInfo.get(j).contains("locked")) {
-                                  enclosingLockType = returnLockType(encInfo.get(j));
-                                  lineAboveLockedLine = j - 1;
-                                  //System.out.println("*********" + lineAboveLockedLine);
-                                  enclosingMethod = returnMethod(encInfo.get(lineAboveLockedLine));
-                                  enclosingClass = returnClass(encInfo.get(lineAboveLockedLine));
-                              }
-                          }
-                          generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, enclosingClass, enclosingMethod, enclosingLockType);
-                          encInfo.clear();
-                          break;
+                  if ( (sectionStackTrace == 1) && (currentLine.trim().contains("locked") && currentLine.trim().contains(waitingToLockList.get(1))) ) {
+                    System.out.println("SECTION OF STACKTRACE: " + sectionStackTrace + "\t" + currentLine);
+                    int lineAboveLockedLine = 0;
+                    for (int j = 0; j < encInfo.size(); j++) {
+                      if (j == 0) {
+                          enclosedMethod = returnMethod(encInfo.get(j));
                       }
-                  }*/
+                      if (j == 1) {
+                          enclosedLockType = returnLockType(encInfo.get(j));
+                      }
+                      if (j == 2) {
+                          enclosedMethodThatCallsMethod = returnMethod(encInfo.get(j));
+                          enclosedClass = returnClass(encInfo.get(j));
+                      }
+                      if (encInfo.get(j).contains("locked")) {
+                          enclosingLockType = returnLockType(encInfo.get(j));
+                          lineAboveLockedLine = j - 1;
+                          //System.out.println("*********" + lineAboveLockedLine);
+                          enclosingMethod = returnMethod(encInfo.get(lineAboveLockedLine));
+                          enclosingClass = returnClass(encInfo.get(lineAboveLockedLine));
+                      }
+                    }
+                    generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, enclosingClass, enclosingMethod, enclosingLockType);
+                    encInfo.clear();
+                    break st;
+                  }
+                  else if ( (sectionStackTrace == 2) && (currentLine.trim().contains("locked") && currentLine.trim().contains(waitingToLockList.get(0))) ) {
+                    System.out.println("SECTION OF STACKTRACE: " + sectionStackTrace + "\t" + currentLine);
+                    int lineAboveLockedLine = 0;
+                    for (int j = 0; j < encInfo.size(); j++) {
+                      if (j == 0) {
+                          enclosedMethod = returnMethod(encInfo.get(j));
+                      }
+                      if (j == 1) {
+                          enclosedLockType = returnLockType(encInfo.get(j));
+                      }
+                      if (j == 2) {
+                          enclosedMethodThatCallsMethod = returnMethod(encInfo.get(j));
+                          enclosedClass = returnClass(encInfo.get(j));
+                      }
+                      if (encInfo.get(j).contains("locked")) {
+                          enclosingLockType = returnLockType(encInfo.get(j));
+                          lineAboveLockedLine = j - 1;
+                          //System.out.println("*********" + lineAboveLockedLine);
+                          enclosingMethod = returnMethod(encInfo.get(lineAboveLockedLine));
+                          enclosingClass = returnClass(encInfo.get(lineAboveLockedLine));
+                      }
+                    }
+                    generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, enclosingClass, enclosingMethod, enclosingLockType);
+                    encInfo.clear();
+                    break st;
+                  }
+                }
               }
           }
           bufferedReader.close();
@@ -409,10 +411,9 @@ public class GenerateFiles {
       }
   }
     
-    public static void getRelevantStackTraceLines(String projectName, String fileName) {
+    /*public static void getRelevantStackTraceLines(String projectName, String fileName) {
         ArrayList<String> encInfo = new ArrayList<String>();
         int lineCount = getNumberOfLines(fileName);
-        //int key = 0;
         String enclosedClass = "";
         String enclosedMethodThatCallsMethod = "";
         String enclosedMethod = "";
@@ -465,7 +466,7 @@ public class GenerateFiles {
         catch (Exception e) {
             System.out.println(e);
         }
-    }
+    }*/
     
     public static void generateTarget(String projectName, String enclosedClass, String enclosedMethodThatCallsMethod, String enclosedMethod, String enclosedLockType, 
             String enclosingClass, String enclosingMethod, String enclosingLockType) throws IOException {
