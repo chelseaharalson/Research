@@ -124,6 +124,7 @@ public class GenerateFiles {
     static HashMap<IClass, HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>>> calledViaReflection = new HashMap<IClass,  HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>>>();
     static boolean foundMethodNodeThatCallsMethod = false;
     static boolean foundEnclosingMethodNode = false;
+    static boolean foundNode = false;
     static ArrayList<String> waitingToLockList = new ArrayList<String>();
     
     public static void main(String[] args) throws Exception {
@@ -145,24 +146,15 @@ public class GenerateFiles {
         pType = p.getProperty("pointerAnalysis"); 
         if (pType == null)
            pType = "zeroOneConCFA";
-        
-        /*if (args.length != 2) {
-            System.err.println("Usage: java GenerateFiles <project name> <version number>");
-            System.exit(1);
-        }
-        
-        String projectName = args[0];
-        String versionNumber = args[1];*/
-
+     
         generateScopeFileLinux(projectName, versionNumber);
-        //String scopeFile = getScopeFile(projectName, versionNumber);
-        // change back to scope.txt when on linux computer
+        // change to scope.txt when on linux computer and scope-mac.txt when on mac
         String scopeFile = folderPath + "scope.txt";
         System.out.println("SCOPE FILE: " + scopeFile);
         
         getEntryClasses(stackTraceFileName);
         
-        // if using Java 8
+        // if using Java 8, then can use join method
         //String entryClassString = String.join(";", entryClassList);
         System.out.println(entryClassList);
         String entryClassString = "";
@@ -189,7 +181,6 @@ public class GenerateFiles {
         icfg = ExplodedInterproceduralCFG.make(cg);
         
         for(CGNode node: icfg.getCallGraph()) {
-           //if (!isATarget(node)) continue;
            ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
 
            IR ir = node.getIR();
@@ -215,32 +206,6 @@ public class GenerateFiles {
                }
             }
         }
-            
-        /*for(CGNode node: icfg.getCallGraph()) { 
-           //if (!isATarget(node)) continue; 
-           ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph)  icfg.getCFG(node);
-           if (graph == null) continue; 
-           java.util.Iterator<IExplodedBasicBlock>   bbIt = graph.iterator();
-           for(;bbIt.hasNext();) {
-             IExplodedBasicBlock bb = bbIt.next();
-              SSAInstruction inst = bb.getInstruction();
-                if (ssaInvokeInstructionClass == null && inst instanceof SSAInvokeInstruction) {
-                   ssaInvokeInstructionClass = inst.getClass();
-                   System.out.println("ssaInvokeInstructionClass = " + ssaInvokeInstructionClass);
-                }
-                instructionContext.put(inst, new Triple(0, node, bb));
-                addCallSites(node, inst);
-                if (inst instanceof SSAInvokeInstruction) {
-                  if (((SSAInvokeInstruction)inst).getDeclaredTarget().getName().toString().indexOf("start") >= 0) {
-                       System.out.println("MAY BE A REFLECTIVE THREAD START IN NODE " + node);  
-                       HashSet<IClass> clset = getClassesCanBeCalledByReflectiveThread(((SSAInvokeInstruction)inst).getDeclaredTarget().getDeclaringClass().getName().toString());
-                       for(IClass cl : clset) {
-                         addToSet(calledViaReflection, cl, cha.lookupClass(((SSAInvokeInstruction)inst).getDeclaredTarget().getDeclaringClass()), node, bb);
-                       }
-                  }
-                }
-             }
-        }*/
         
         getWaitingToLock(stackTraceFileName);
         getRelevantStackTraceLines(projectName, stackTraceFileName);
@@ -474,8 +439,15 @@ public class GenerateFiles {
             String filterEnclosed = "";
             String enclosingLineNum = "0";
             String enclosedLineNum = "";
+            String enclosingSuperClass = "";
+            String enclosedSuperClass = "";
+            String enclosingSubClassHintText = "";
+            String enclosedSubClassHintText = "";
+            boolean enclosingSubClassHint = false;
+            boolean enclosedSubClassHint = false;
 
             if (!enclosingClass.equals(enclosingLockType)) {
+                // Option 1: monitorenter
                 String enclosingMonitorEnter = "monitorenter";
                 CGNode enclosingMethodNode = null;
                 for(CGNode node: icfg.getCallGraph()) {
@@ -495,6 +467,34 @@ public class GenerateFiles {
                 System.out.println("METHOD NODE FOR ENCLOSING LINE NUM: " + enclosingMethodNode);
                 enclosingLineNum = findEnclosingLineNum(enclosingMethodNode, enclosingLockType);
                 filterEnclosing = "filterEnclosing=" + enclosingClass + ";" + enclosingMonitorEnter + ";" + enclosingLineNum + ";" + enclosingLockType;
+                
+                // Option 2: subclass
+                if (enclosingLineNum == null) {
+                  CGNode eMethodNode = null;
+                  for(CGNode node: icfg.getCallGraph()) {
+                    ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
+                    if (graph == null) continue;
+                    //if (node.getMethod().toString().indexOf("fakeRootMethod") >= 0) continue;
+                    if (node.getMethod().getDeclaringClass().getName().getClassName().toString().indexOf("FakeRootClass") >= 0) continue;
+                    if (!(node.toString().indexOf("Application") >= 0)) continue;
+                    if (node.getMethod().toString().indexOf("<clinit>") >=0) continue;
+                    if (node.getMethod().toString().indexOf("<init>") >=0) continue;
+                    eMethodNode = findEnclosingNode(node, enclosingMethod);
+                    if (foundEnclosingMethodNode == true) {
+                      foundEnclosingMethodNode = false;
+                      break;
+                    }
+                  }
+                  System.out.println("METHOD NODE (SUPERCLASS) FOR ENCLOSING LINE NUM: " + eMethodNode + "\t SUPERCLASS: " + eMethodNode.getMethod().getDeclaringClass().getName());
+                  enclosingSubClassHint = findSubclass(eMethodNode, enclosingMethod, enclosingLockType);
+                  
+                  enclosingLineNum = "0";
+                  filterEnclosing = "filterEnclosing=" + enclosingClass + ";" + enclosingMethod + ";" + enclosingLineNum + ";" + enclosingLockType;
+                  if (enclosingSubClassHint == true ) {
+                    enclosingSuperClass = eMethodNode.getMethod().getDeclaringClass().getName().toString();
+                    enclosingSubClassHintText = "subclassingHint=" + enclosingSuperClass + ";" + enclosingMethod + ";" + enclosingLockType;
+                  }
+                }
             }
             else {
                 filterEnclosing = "filterEnclosing=" + enclosingClass + ";" + enclosingMethod + ";" + enclosingLineNum + ";" + enclosingLockType;
@@ -516,16 +516,77 @@ public class GenerateFiles {
               }
             }
             System.out.println("METHOD NODE FOR ENCLOSED LINE NUM: " + methodNodeThatCallsMethod);
-            enclosedLineNum = findEnclosedLineNum(methodNodeThatCallsMethod, enclosedMethod);
+            enclosedLineNum = findEnclosedLineNum(methodNodeThatCallsMethod, enclosedMethod, enclosedLockType);
+            
+            if (!enclosedClass.equals(enclosedLockType)) {
+              // check subclassing
+              CGNode methodNode = null;
+              for(CGNode node: icfg.getCallGraph()) {
+                ExplodedControlFlowGraph graph = (ExplodedControlFlowGraph) icfg.getCFG(node);
+                if (graph == null) continue;
+                //if (node.getMethod().toString().indexOf("fakeRootMethod") >= 0) continue;
+                if (node.getMethod().getDeclaringClass().getName().getClassName().toString().indexOf("FakeRootClass") >= 0) continue;
+                if (!(node.toString().indexOf("Application") >= 0)) continue;
+                if (node.getMethod().toString().indexOf("<clinit>") >=0) continue;
+                if (node.getMethod().toString().indexOf("<init>") >=0) continue;
+                methodNode = findEnclosedNode(node, enclosedMethod);
+                if (foundNode == true) {
+                  foundNode = false;
+                  break;
+                }
+              }
+              System.out.println("METHOD NODE (SUPERCLASS) FOR ENCLOSED LINE NUM: " + methodNode);
+              enclosedSubClassHint = findSubclass(methodNode, enclosedMethod, enclosedLockType);
+              System.out.println("ENCLOSED SUBCLASS HINT FOR: " + enclosedSubClassHint + "\t SUPERCLASS: " + methodNode.getMethod().getDeclaringClass().getName().toString());
+              enclosedSuperClass = methodNode.getMethod().getDeclaringClass().getName().toString();
+            }
+
             filterEnclosed = "filterEnclosed=" + enclosedClass + ";" + enclosedMethodThatCallsMethod + ";" + enclosedMethod + ";" + enclosedLineNum + ";" + enclosedLockType;
+            if (enclosedSubClassHint == true ) {
+              enclosedSubClassHintText = "subclassingHint=" + enclosedSuperClass + ";" + enclosedMethod + ";" + enclosedLockType;
+            }
              
-            String target = "//Two options for filterEnclosing:\n" + 
-                "//1) classname;method that grabs the enclosing lock; 0 (as line no); lock type\n" + 
-                "//2) file name (e.g. A.java); monitorenter; line no; lock type\n" + 
-                filterEnclosing + "\n" + 
-                "//classname;method that calls the enclosed locking instruction; enclosed locking instruction (methodname or monitorenter); line number in that method; line  no; lock type\n" + 
-                filterEnclosed;
-            System.out.println(target);
+            String target = "";
+            if (enclosingSubClassHint == false && enclosedSubClassHint == false) {
+              target = "//Two options for filterEnclosing:\n" + 
+                  "//1) classname;method that grabs the enclosing lock; 0 (as line no); lock type\n" + 
+                  "//2) file name (e.g. A.java); monitorenter; line no; lock type\n" + 
+                  filterEnclosing + "\n" + 
+                  "//classname;method that calls the enclosed locking instruction; enclosed locking instruction (methodname or monitorenter); line number in that method; line  no; lock type\n" + 
+                  filterEnclosed;
+              System.out.println(target);
+            }
+            else if (enclosingSubClassHint == true && enclosedSubClassHint == false) {
+              target = "//Two options for filterEnclosing:\n" + 
+                  "//1) classname;method that grabs the enclosing lock; 0 (as line no); lock type\n" + 
+                  "//2) file name (e.g. A.java); monitorenter; line no; lock type\n" + 
+                  filterEnclosing + "\n" + 
+                  "//classname;method that calls the enclosed locking instruction; enclosed locking instruction (methodname or monitorenter); line number in that method; line  no; lock type\n" + 
+                  filterEnclosed + "\n" +
+                  enclosingSubClassHintText;
+              System.out.println(target);
+            }
+            else if (enclosedSubClassHint == true && enclosingSubClassHint == false) {
+              target = "//Two options for filterEnclosing:\n" + 
+                  "//1) classname;method that grabs the enclosing lock; 0 (as line no); lock type\n" + 
+                  "//2) file name (e.g. A.java); monitorenter; line no; lock type\n" + 
+                  filterEnclosing + "\n" + 
+                  "//classname;method that calls the enclosed locking instruction; enclosed locking instruction (methodname or monitorenter); line number in that method; line  no; lock type\n" + 
+                  filterEnclosed + "\n" +
+                  enclosedSubClassHintText;
+              System.out.println(target);
+            }
+            else if (enclosedSubClassHint == true && enclosingSubClassHint == true) {
+              target = "//Two options for filterEnclosing:\n" + 
+                  "//1) classname;method that grabs the enclosing lock; 0 (as line no); lock type\n" + 
+                  "//2) file name (e.g. A.java); monitorenter; line no; lock type\n" + 
+                  filterEnclosing + "\n" + 
+                  "//classname;method that calls the enclosed locking instruction; enclosed locking instruction (methodname or monitorenter); line number in that method; line  no; lock type\n" + 
+                  filterEnclosed + "\n" +
+                  enclosingSubClassHintText + "\n" + 
+                  enclosedSubClassHintText;
+              System.out.println(target);
+            }
 
             //String folder = "/Users/chelseametcalf/Dropbox/Documents/Research/AliasedLockOrder/" + projectName + "/";
             targetNumber++;
@@ -710,12 +771,28 @@ public class GenerateFiles {
       return lineNum;
     }
     
-    static String findEnclosedLineNum(CGNode methodNodeThatCallsMethod, String methodName) {
+    static String findEnclosedLineNum(CGNode methodNodeThatCallsMethod, String methodName, String lockType) {
       String enclosedLineNum = "";
-      SSAInstruction in = findCallToInstr(methodNodeThatCallsMethod, methodName);
+      SSAInstruction in = findCallToInstr(methodNodeThatCallsMethod, methodName, lockType);
       System.out.println("FOUND CALL TO INSTR: " + prettyPrint(in));
       enclosedLineNum = prettyPrintLineNum(in);
       return enclosedLineNum;
+    }
+    
+    static boolean findSubclass(CGNode node, String methodName, String lockType) {
+      IClass baseLockType = node.getMethod().getDeclaringClass();
+      if (baseLockType != null) {
+        java.util.Collection<IClass> subcl = getImmediateSubclasses(baseLockType);
+        for(IClass sub : subcl) {
+          //System.out.println("SUBCLASS: " + sub.toString());
+          if (sub.toString().indexOf(lockType) >= 0 ) {
+            System.out.println("SUBCLASS: " + sub.toString());
+            return true;
+          }
+        }
+      }
+      System.out.println("Failed to find subclass for " + node);
+      return false;
     }
     
     static String findEnclosingLineNum(CGNode node, String enclosingLockType) {
@@ -751,14 +828,15 @@ public class GenerateFiles {
       return null;
     }
 
-    public static SSAInstruction findCallToInstr(CGNode n, String methodName) {
+    public static SSAInstruction findCallToInstr(CGNode n, String methodName, String lockType) {
        IR ir = n.getIR();
        if (ir == null) return null;
        for (Iterator<SSAInstruction> it = ir.iterateAllInstructions(); it.hasNext();) {
            SSAInstruction s = it.next();
            if (s instanceof SSAAbstractInvokeInstruction) {
              SSAAbstractInvokeInstruction call = (SSAAbstractInvokeInstruction) s;
-             if (call.getCallSite().getDeclaredTarget().getName().toString().equals(methodName)) {
+             if ( call.getCallSite().getDeclaredTarget().getName().toString().equals(methodName) && (call.getCallSite().toString().indexOf(lockType) >= 0) ) {
+               System.out.println("CALL SITE: " + call);
                return s;
              }
            }
@@ -799,6 +877,21 @@ public class GenerateFiles {
       return null;
     }
     
+    public static CGNode findEnclosedNode(CGNode n, String methodName) {
+      //System.out.println("CHECKING NODE: " + n);
+      CGNode returnNode;
+      
+      if (n.getMethod().getName().toString().equals(methodName)) {
+        returnNode = n;
+        System.out.println("FOUND ENCLOSED METHOD NODE THAT CALLS METHOD: " + returnNode);
+        //System.out.println(returnNode.getMethod().getDeclaringClass().getName());
+        foundNode = true;
+        return returnNode;
+      }
+      //Assertions.UNREACHABLE("failed to find call to " + methodName + " in " + n);
+      return null;
+    }
+    
    static HashSet<IClass> getClassesCanBeCalledByReflectiveThread(String className) {
       HashSet<IClass> result = new HashSet<IClass>();
       java.util.Set<IClass> keySet = reflectionInfo.keySet();
@@ -812,6 +905,17 @@ public class GenerateFiles {
       }
       return result;
     }
+   
+   private static ArrayList<IClass> getImmediateSubclasses(IClass cl) {
+       ArrayList<IClass> subcllist = new ArrayList<IClass>();
+       java.util.Iterator<IClass> clIt = cha.iterator();
+       while(clIt.hasNext()) {
+         IClass subcl = clIt.next();
+         if (cha.isSubclassOf(subcl, cl) && !subcl.equals(cl)) 
+           subcllist.add(subcl);
+       }
+       return subcllist;      
+   }
    
    private static void addCallSites(CGNode node, SSAInstruction inst) {
      if (inst instanceof SSAInvokeInstruction) {
@@ -832,24 +936,6 @@ public class GenerateFiles {
            oneToMany.put(key, set);
     }
 
-   private static void addToSet(HashMap<IClass, HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>>> oneToMany, IClass cl, IClass thcl, CGNode node, IExplodedBasicBlock bb) {
-         HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>> map;
-         if (oneToMany.containsKey(cl))
-           map = oneToMany.remove(cl);
-         else {
-             map = new HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>>();
-         }
-         oneToMany.put(cl, map);
-         HashSet<Pair<CGNode, IExplodedBasicBlock>> pset;
-         if (map.containsKey(thcl)) 
-           pset = map.remove(thcl);
-         else {
-            pset = new HashSet<Pair<CGNode, IExplodedBasicBlock>>();
-         }
-         map.put(thcl, pset);
-         pset.add(new Pair<CGNode, IExplodedBasicBlock>(node, bb));
-     }
-    
     private static void configureAndCreateCallGraph(String scopeFile, String mainClass, String entryClass) throws IOException, ClassHierarchyException, CallGraphBuilderCancelException  {
         File exclusionsFile = null;
         AnalysisScope scope = AnalysisScopeReader.readJavaScope(scopeFile, exclusionsFile, GenerateFiles.class.getClassLoader()); 
