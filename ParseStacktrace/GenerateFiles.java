@@ -124,7 +124,7 @@ public class GenerateFiles {
     static HashMap<IClass, HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>>> calledViaReflection = new HashMap<IClass,  HashMap<IClass, HashSet<Pair<CGNode, IExplodedBasicBlock>>>>();
     static boolean foundMethodNodeThatCallsMethod = false;
     static boolean foundEnclosingMethodNode = false;
-    static boolean foundNode = false;
+    static boolean foundEnclosedNode = false;
     static ArrayList<String> waitingToLockList = new ArrayList<String>();
     
     public static void main(String[] args) throws Exception {
@@ -294,6 +294,7 @@ public class GenerateFiles {
     public static void getRelevantStackTraceLines(String projectName, String fileName) {
       ArrayList<String> encInfo = new ArrayList<String>();
       int lineCount = getNumberOfLines(fileName);
+      String classOfEnclosedNode = "";
       String enclosedClass = "";
       String enclosedMethodThatCallsMethod = "";
       String enclosedMethod = "";
@@ -320,6 +321,7 @@ public class GenerateFiles {
                     for (int j = 0; j < encInfo.size(); j++) {
                       if (j == 0) {
                           enclosedMethod = returnMethod(encInfo.get(j));
+                          classOfEnclosedNode = returnClass(encInfo.get(j));
                       }
                       if (j == 1) {
                           enclosedLockType = returnLockType(encInfo.get(j));
@@ -336,7 +338,7 @@ public class GenerateFiles {
                           enclosingClass = returnClass(encInfo.get(lineAboveLockedLine));
                       }
                     }
-                    generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, enclosingClass, enclosingMethod, enclosingLockType);
+                    generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, classOfEnclosedNode, enclosingClass, enclosingMethod, enclosingLockType);
                     encInfo.clear();
                     break st;
                   }
@@ -346,6 +348,7 @@ public class GenerateFiles {
                     for (int j = 0; j < encInfo.size(); j++) {
                       if (j == 0) {
                           enclosedMethod = returnMethod(encInfo.get(j));
+                          classOfEnclosedNode = returnClass(encInfo.get(j));
                       }
                       if (j == 1) {
                           enclosedLockType = returnLockType(encInfo.get(j));
@@ -362,7 +365,7 @@ public class GenerateFiles {
                           enclosingClass = returnClass(encInfo.get(lineAboveLockedLine));
                       }
                     }
-                    generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, enclosingClass, enclosingMethod, enclosingLockType);
+                    generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, classOfEnclosedNode, enclosingClass, enclosingMethod, enclosingLockType);
                     encInfo.clear();
                     break st;
                   }
@@ -376,64 +379,7 @@ public class GenerateFiles {
       }
   }
     
-    /*public static void getRelevantStackTraceLines(String projectName, String fileName) {
-        ArrayList<String> encInfo = new ArrayList<String>();
-        int lineCount = getNumberOfLines(fileName);
-        String enclosedClass = "";
-        String enclosedMethodThatCallsMethod = "";
-        String enclosedMethod = "";
-        String enclosedLockType = "";
-        String enclosingClass = "";
-        String enclosingMethod = "";
-        String enclosingLockType = "";
-        try {
-            FileReader fileReader = new FileReader(fileName);
-            BufferedReader bufferedReader = new BufferedReader(fileReader);
-            String currentLine = "";
-            while ((currentLine = bufferedReader.readLine()) != null) {
-                if (currentLine.trim().contains("\":")) {
-                    int i = 0;
-                    while (((currentLine = bufferedReader.readLine()) != null) && i < lineCount) {
-                        //System.out.println("Adding " + currentLine + " to encInfo");
-                        encInfo.add(currentLine.trim());
-                        i++;
-                        if (currentLine.trim().contains("locked")) {
-                            //System.out.println("ENC INFO: " + encInfo);
-                            int lineAboveLockedLine = 0;
-                            for (int j = 0; j < encInfo.size(); j++) {
-                                if (j == 0) {
-                                    enclosedMethod = returnMethod(encInfo.get(j));
-                                }
-                                if (j == 1) {
-                                    enclosedLockType = returnLockType(encInfo.get(j));
-                                }
-                                if (j == 2) {
-                                    enclosedMethodThatCallsMethod = returnMethod(encInfo.get(j));
-                                    enclosedClass = returnClass(encInfo.get(j));
-                                }
-                                if (encInfo.get(j).contains("locked")) {
-                                    enclosingLockType = returnLockType(encInfo.get(j));
-                                    lineAboveLockedLine = j - 1;
-                                    //System.out.println("*********" + lineAboveLockedLine);
-                                    enclosingMethod = returnMethod(encInfo.get(lineAboveLockedLine));
-                                    enclosingClass = returnClass(encInfo.get(lineAboveLockedLine));
-                                }
-                            }
-                            generateTarget(projectName, enclosedClass, enclosedMethodThatCallsMethod, enclosedMethod, enclosedLockType, enclosingClass, enclosingMethod, enclosingLockType);
-                            encInfo.clear();
-                            break;
-                        }
-                    }
-                }
-            }
-            bufferedReader.close();
-        }
-        catch (Exception e) {
-            System.out.println(e);
-        }
-    }*/
-    
-    public static void generateTarget(String projectName, String enclosedClass, String enclosedMethodThatCallsMethod, String enclosedMethod, String enclosedLockType, 
+    public static void generateTarget(String projectName, String enclosedClass, String enclosedMethodThatCallsMethod, String enclosedMethod, String enclosedLockType, String classOfEnclosedNode, 
             String enclosingClass, String enclosingMethod, String enclosingLockType) throws IOException {
             String filterEnclosing = "";
             String filterEnclosed = "";
@@ -458,7 +404,7 @@ public class GenerateFiles {
                   if (!(node.toString().indexOf("Application") >= 0)) continue;
                   if (node.getMethod().toString().indexOf("<clinit>") >=0) continue;
                   if (node.getMethod().toString().indexOf("<init>") >=0) continue;
-                  enclosingMethodNode = findEnclosingNode(node, enclosingMethod);
+                  enclosingMethodNode = findEnclosingNode(node, enclosingMethod, enclosingClass);
                   if (foundEnclosingMethodNode == true) {
                     foundEnclosingMethodNode = false;
                     break;
@@ -479,7 +425,7 @@ public class GenerateFiles {
                     if (!(node.toString().indexOf("Application") >= 0)) continue;
                     if (node.getMethod().toString().indexOf("<clinit>") >=0) continue;
                     if (node.getMethod().toString().indexOf("<init>") >=0) continue;
-                    eMethodNode = findEnclosingNode(node, enclosingMethod);
+                    eMethodNode = findEnclosingNode(node, enclosingMethod, enclosingClass);
                     if (foundEnclosingMethodNode == true) {
                       foundEnclosingMethodNode = false;
                       break;
@@ -509,16 +455,20 @@ public class GenerateFiles {
               if (!(node.toString().indexOf("Application") >= 0)) continue;
               if (node.getMethod().toString().indexOf("<clinit>") >=0) continue;
               if (node.getMethod().toString().indexOf("<init>") >=0) continue;
-              methodNodeThatCallsMethod = findNode(node, enclosedMethodThatCallsMethod);
+              methodNodeThatCallsMethod = findMethodNodeThatCallsEnclosedMethod(node, enclosedMethodThatCallsMethod, enclosedClass);
               if (foundMethodNodeThatCallsMethod == true) {
                 foundMethodNodeThatCallsMethod = false;
                 break;
               }
             }
             System.out.println("METHOD NODE FOR ENCLOSED LINE NUM: " + methodNodeThatCallsMethod);
-            enclosedLineNum = findEnclosedLineNum(methodNodeThatCallsMethod, enclosedMethod, enclosedLockType);
+            //if (enclosedClass.equals(enclosedLockType)) {
+              enclosedLineNum = findEnclosedLineNum(methodNodeThatCallsMethod, enclosedMethod, enclosedLockType);
+            //}
             
             if (!enclosedClass.equals(enclosedLockType)) {
+              //enclosedLineNum = findEnclosedLineNumSubclass(methodNodeThatCallsMethod, enclosedMethod);
+              
               // check subclassing
               CGNode methodNode = null;
               for(CGNode node: icfg.getCallGraph()) {
@@ -529,9 +479,9 @@ public class GenerateFiles {
                 if (!(node.toString().indexOf("Application") >= 0)) continue;
                 if (node.getMethod().toString().indexOf("<clinit>") >=0) continue;
                 if (node.getMethod().toString().indexOf("<init>") >=0) continue;
-                methodNode = findEnclosedNode(node, enclosedMethod);
-                if (foundNode == true) {
-                  foundNode = false;
+                methodNode = findEnclosedNode(node, enclosedMethod, classOfEnclosedNode);
+                if (foundEnclosedNode == true) {
+                  foundEnclosedNode = false;
                   break;
                 }
               }
@@ -778,8 +728,9 @@ public class GenerateFiles {
       enclosedLineNum = prettyPrintLineNum(in);
       return enclosedLineNum;
     }
-    
+
     static boolean findSubclass(CGNode node, String methodName, String lockType) {
+      //System.out.println("Trying to find subclass for " + node);
       IClass baseLockType = node.getMethod().getDeclaringClass();
       if (baseLockType != null) {
         java.util.Collection<IClass> subcl = getImmediateSubclasses(baseLockType);
@@ -841,16 +792,32 @@ public class GenerateFiles {
              }
            }
        }
+       // subclassing possibility
+       for (Iterator<SSAInstruction> it = ir.iterateAllInstructions(); it.hasNext();) {
+         SSAInstruction s = it.next();
+         if (s instanceof SSAAbstractInvokeInstruction) {
+           SSAAbstractInvokeInstruction call = (SSAAbstractInvokeInstruction) s;
+           if ( call.getCallSite().getDeclaredTarget().getName().toString().equals(methodName) ) {
+             System.out.println("CALL SITE: " + call);
+             return s;
+           }
+         }
+       }
        System.out.println("Failed to find call to " + methodName + " in " + n);
        //Assertions.UNREACHABLE("failed to find call to " + methodName + " in " + n);
        return null;
      }
-    
-    public static CGNode findEnclosingNode(CGNode n, String methodName) {
+
+    public static CGNode findEnclosingNode(CGNode n, String methodName, String className) {
       //System.out.println("CHECKING NODE: " + n);
       CGNode returnNode;
       
-      if (n.getMethod().getName().toString().equals(methodName)) {
+      /*System.out.println("CLASS IN FIND ENCLOSING NODE: " + n.getMethod().getDeclaringClass().getName().toString());
+      System.out.println("CLASSNAME: " + className);
+      System.out.println("METHOD IN FIND ENCLOSING NODE: " + n.getMethod().getName().toString());
+      System.out.println("METHOD: " + methodName);*/
+      
+      if (n.getMethod().getName().toString().equals(methodName) && n.getMethod().getDeclaringClass().getName().toString().equals(className) ) {
         returnNode = n;
         System.out.println("FOUND ENCLOSING METHOD NODE: " + returnNode);
         //System.out.println(returnNode.getMethod().getDeclaringClass().getName());
@@ -862,11 +829,16 @@ public class GenerateFiles {
       return null;
     }
     
-    public static CGNode findNode(CGNode n, String methodName) {
+    public static CGNode findMethodNodeThatCallsEnclosedMethod(CGNode n, String methodName, String className) {
       //System.out.println("CHECKING NODE: " + n);
       CGNode returnNode;
       
-      if (n.getMethod().getName().toString().equals(methodName)) {
+      /*System.out.println("CLASS IN FIND METHOD NODE THAT CALLS METHOD: " + n.getMethod().getDeclaringClass().getName().toString());
+      System.out.println("CLASSNAME: " + className);
+      System.out.println("METHOD IN FIND METHOD NODE THAT CALLS METHOD: " + n.getMethod().getName().toString());
+      System.out.println("METHOD: " + methodName);*/
+      
+      if (n.getMethod().getName().toString().equals(methodName) && n.getMethod().getDeclaringClass().getName().toString().equals(className) ) {
         returnNode = n;
         System.out.println("FOUND METHOD NODE THAT CALLS METHOD: " + returnNode);
         //System.out.println(returnNode.getMethod().getDeclaringClass().getName());
@@ -877,15 +849,20 @@ public class GenerateFiles {
       return null;
     }
     
-    public static CGNode findEnclosedNode(CGNode n, String methodName) {
+    public static CGNode findEnclosedNode(CGNode n, String methodName, String className) {
       //System.out.println("CHECKING NODE: " + n);
       CGNode returnNode;
       
-      if (n.getMethod().getName().toString().equals(methodName)) {
+      /*System.out.println("CLASS IN FIND ENCLOSED NODE: " + n.getMethod().getDeclaringClass().getName().toString());
+      System.out.println("CLASSNAME: " + className);
+      System.out.println("METHOD IN FIND ENCLOSED NODE: " + n.getMethod().getName().toString());
+      System.out.println("METHOD: " + methodName);*/
+      
+      if (n.getMethod().getName().toString().equals(methodName) && n.getMethod().getDeclaringClass().getName().toString().equals(className) ) {
         returnNode = n;
-        System.out.println("FOUND ENCLOSED METHOD NODE THAT CALLS METHOD: " + returnNode);
+        System.out.println("FOUND ENCLOSED METHOD NODE: " + returnNode);
         //System.out.println(returnNode.getMethod().getDeclaringClass().getName());
-        foundNode = true;
+        foundEnclosedNode = true;
         return returnNode;
       }
       //Assertions.UNREACHABLE("failed to find call to " + methodName + " in " + n);
@@ -1002,11 +979,16 @@ public class GenerateFiles {
         IClass klass = cha.lookupClass(TypeReference.findOrCreate(ClassLoaderReference.Application,
             StringStuff.deployment2CanonicalTypeString(entryClass)));
         entryClasses.add(klass);
-        for (IMethod m : klass.getDeclaredMethods()) {
-          System.out.println("Adding method " + m + " as an entry point");
-          //if (m.isPublic()) {
-            result.add(new DefaultEntrypoint(m, cha));
-          //}
+        if (klass == null) {
+          System.out.println("FAILED TO FIND CLASS");
+        }
+        if (klass != null) {
+          for (IMethod m : klass.getDeclaredMethods()) {
+            System.out.println("Adding method " + m + " as an entry point");
+            //if (m.isPublic()) {
+              result.add(new DefaultEntrypoint(m, cha));
+            //}
+          }
         }
         return result;
     }
