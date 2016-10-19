@@ -1,0 +1,29 @@
+vars:
+main.0.numRW16R
+main.0.numC3
+main.0.numC4
+main.0.numB2A
+main.0.numB7A
+main.0.t
+main.0.s
+AirplaneA.0.a
+AirplaneA.1.a
+preds: 
+main.0.numRW16R = 0
+main.0.numC3 = 0
+main.0.numC4 = 0
+main.0.numB2A = 0
+main.0.numB7A = 0
+main.0.numRW16R >= 0
+main.0.numC3 >= 0
+main.0.numC4 >= 0
+main.0.numB2A >= 0
+main.0.numB7A >= 0
+main.0.t = main.0.s
+AirplaneA.0.a = main.0.t
+AirplaneA.1.a = main.0.t
+main.0.s >= AirplaneA.0.a
+main.0.s >= AirplaneA.1.a
+prop:
+main.0.numRW16R = 0
+main.0.numC3 = 0
