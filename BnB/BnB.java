@@ -18,7 +18,11 @@ public class BnB {
     static ArrayList<String> variableList = new ArrayList<String>();
     static ArrayList<PredObj> predList = new ArrayList<PredObj>();
     static ArrayList<String> propList = new ArrayList<String>();
-    //static ArrayList<Node> solutionSets = new ArrayList<Node>();
+    static int depth;
+    static ArrayList<ArrayList<String>> solutionList = new ArrayList<ArrayList<String>>();
+    static String solutionString = "";
+    static ArrayList<String> preProcessList = new ArrayList<String>();
+    //static ArrayList<ArrayList<String>> solutionList = new ArrayList<ArrayList<String>>();
 
     public static void main(String[] args) throws IOException {
         if (args.length != 3) {
@@ -27,11 +31,12 @@ public class BnB {
         }
         String predFile = args[0];
         String compatFile = args[1];
-        int depth = Integer.parseInt(args[2]);
+        depth = Integer.parseInt(args[2]);
         
         readPredFile(predFile);
         readCompatFile(compatFile);
         printCompatFile();
+        
         // Test
         getCompatValue("p5","p9");
         ArrayList<PredObj> testList = new ArrayList<PredObj>();
@@ -47,10 +52,10 @@ public class BnB {
         p2.predVal = "p2";
         p2.predicate = "main.0.s >= AirplaneA.0.a";
         testList.add(p2);
-        PredObj p3 = new PredObj();
+        /*PredObj p3 = new PredObj();
         p3.predVal = "p3";
         p3.predicate = "main.0.s >= AirplaneA.1.a";
-        testList.add(p3);
+        testList.add(p3);*/
         System.out.println();
         System.out.println("Printing test list...");
         for (int i = 0; i < testList.size(); i++) {
@@ -63,34 +68,62 @@ public class BnB {
             tList.add(p.predVal);
             System.out.println("Added " + p.predVal);
         }
-        computePermutations(tList, 0);
-    }
-
-    // Generate available solution sets by branch and bound
-    // Generate initial permuation vector, then save that state as first examined in branch and bound
-    public static void generateSolutionSet() {
-        Queue<Node> solnQueue = new PriorityQueue<Node>();
-        
-    }
-
-    public static void computePermutations(java.util.List<String> arr, int k) {
-        for (int i = k; i < arr.size(); i++) {
-            java.util.Collections.swap(arr, i, k);
-            computePermutations(arr, k+1);
-            java.util.Collections.swap(arr, k, i);
-        }
-        if (k == arr.size() -1) {
-            System.out.println(java.util.Arrays.toString(arr.toArray()));
-        }
+        String[] permArr = tList.toArray(new String[testList.size()]);
+        ArrayList<ArrayList<String>> cp = computePermutations(permArr, 0);
+        System.out.println(cp);
+        //System.out.println(test);
+        System.out.println(solutionList);
     }
     
-    /*public static String appendString(ArrayList<PredObj> pList) {
-        String result = "";
-        for (PredObj p : pList) {
-            result = result + 
+    public static ArrayList<ArrayList<String>> computePermutations(String[] pVal, int kDepth) {
+        ArrayList<String> item = new ArrayList<String>();
+        ArrayList<ArrayList<String>> result = new ArrayList<ArrayList<String>>();
+        ArrayList<String> used = new ArrayList<String>();
+        if (pVal.length == 0) {
+            return result;
+        }
+        return helper(result, item, used, pVal, kDepth);
+    }
+    
+    public static ArrayList<ArrayList<String>> helper(ArrayList<ArrayList<String>> result, ArrayList<String> item, 
+        ArrayList<String> used, String[] pVal, int kDepth) {
+        // base case: no more choices
+        if (item.size() == pVal.length) {
+            result.add(new ArrayList<String>(item));
+            return result;
+        }
+
+        if (kDepth < depth) {
+            // recursive case: choose each possible combination
+            // use backtracking... before recursive call, add sth
+            // after recursion, emove what has been added
+            for (int i = 0; i < pVal.length; i++) {
+                if (!used.contains(pVal[i])) {
+                    item.add(pVal[i]);
+                    used.add(pVal[i]);
+
+                    /*solutionList.add(item);
+                    System.out.println("ADDED: " + item);
+                    System.out.println(solutionList);
+                    System.out.println();*/
+                    System.out.println("LIST: " + item);
+                    for (String s : item) {
+                        solutionString = solutionString + s + ";";
+                    }
+                    //System.out.println(solutionString);
+                    preProcessList.add(solutionString);
+                    if (!solutionList.contains(preProcessList)) {
+                        solutionList.add(preProcessList);
+                    }
+                    solutionString = "";
+                    helper(result, item, used, pVal, kDepth+1);
+                    item.remove(item.size()-1);
+                    used.remove(used.size()-1);
+                }
+            }
         }
         return result;
-    }*/
+    }
     
     // numOfVars
     public static int computeVarCost(ArrayList<PredObj> solutionList) {
