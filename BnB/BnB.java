@@ -58,6 +58,12 @@ public class BnB {
         }
         computeVarCost(testList);
         computeCohesionCost(testList);
+        ArrayList<String> tList = new ArrayList<String>();
+        for (PredObj p : testList) {
+            tList.add(p.predVal);
+            System.out.println("Added " + p.predVal);
+        }
+        computePermutations(tList, 0);
     }
 
     // Generate available solution sets by branch and bound
@@ -66,39 +72,25 @@ public class BnB {
         Queue<Node> solnQueue = new PriorityQueue<Node>();
         
     }
-    
-    public static int bound(Node node, int varCost) {
-        // if numOfVars is greater 
-        if (node.numOfVars >= varCost) {
-            return 0;
+
+    public static void computePermutations(java.util.List<String> arr, int k) {
+        for (int i = k; i < arr.size(); i++) {
+            java.util.Collections.swap(arr, i, k);
+            computePermutations(arr, k+1);
+            java.util.Collections.swap(arr, k, i);
         }
-        
-        // initialize bound on profit by current profit
-        int profitBound = node.profit;
-        
-        // start 
-        return profitBound;
+        if (k == arr.size() -1) {
+            System.out.println(java.util.Arrays.toString(arr.toArray()));
+        }
     }
     
-    public static ArrayList<String> getSolutionSet() {
-        ArrayList<String> solnSet = new ArrayList<String>();
-        
-        // make a queue for traversing the node
-        Queue<Node> nodeQueue = new PriorityQueue<Node>();
-        Node startNode = new Node();
-        Node currentNode = new Node();
-        
-        // node at starting (root)
-        startNode.level = -1;
-        startNode.profit = 0;
-        nodeQueue.add(startNode);
-        
-        // one by one extract an item from decision tree
-        // compute profit (var / cohesion cost) of all children of extracted node and keep saving into max solnSet
-        
-        
-        return solnSet;
-    }
+    /*public static String appendString(ArrayList<PredObj> pList) {
+        String result = "";
+        for (PredObj p : pList) {
+            result = result + 
+        }
+        return result;
+    }*/
     
     // numOfVars
     public static int computeVarCost(ArrayList<PredObj> solutionList) {
