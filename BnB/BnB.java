@@ -5,6 +5,8 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.PriorityQueue;
+import java.util.Queue;
 
 /**
  *
@@ -14,9 +16,9 @@ public class BnB {
     
     static String[][] compatMatrix;
     static ArrayList<String> variableList = new ArrayList<String>();
-    //static ArrayList<String> predList = new ArrayList<String>();
     static ArrayList<PredObj> predList = new ArrayList<PredObj>();
     static ArrayList<String> propList = new ArrayList<String>();
+    //static ArrayList<Node> solutionSets = new ArrayList<Node>();
 
     public static void main(String[] args) throws IOException {
         if (args.length != 3) {
@@ -31,7 +33,118 @@ public class BnB {
         readCompatFile(compatFile);
         printCompatFile();
         // Test
-        getCompatValue("p10","p5");
+        getCompatValue("p5","p9");
+        ArrayList<PredObj> testList = new ArrayList<PredObj>();
+        PredObj p0 = new PredObj();
+        p0.predVal = "p0";
+        p0.predicate = "main.0.numRW16R = 0";
+        testList.add(p0);
+        PredObj p1 = new PredObj();
+        p1.predVal = "p1";
+        p1.predicate = "main.0.numB7A >= 0";
+        testList.add(p1);
+        PredObj p2 = new PredObj();
+        p2.predVal = "p2";
+        p2.predicate = "main.0.s >= AirplaneA.0.a";
+        testList.add(p2);
+        PredObj p3 = new PredObj();
+        p3.predVal = "p3";
+        p3.predicate = "main.0.s >= AirplaneA.1.a";
+        testList.add(p3);
+        System.out.println();
+        System.out.println("Printing test list...");
+        for (int i = 0; i < testList.size(); i++) {
+            System.out.println(testList.get(i).predicate + ", " + testList.get(i).predVal);
+        }
+        computeVarCost(testList);
+        computeCohesionCost(testList);
+    }
+
+    // Generate available solution sets by branch and bound
+    // Generate initial permuation vector, then save that state as first examined in branch and bound
+    public static void generateSolutionSet() {
+        Queue<Node> solnQueue = new PriorityQueue<Node>();
+        
+    }
+    
+    public static int bound(Node node, int varCost) {
+        // if numOfVars is greater 
+        if (node.numOfVars >= varCost) {
+            return 0;
+        }
+        
+        // initialize bound on profit by current profit
+        int profitBound = node.profit;
+        
+        // start 
+        return profitBound;
+    }
+    
+    public static ArrayList<String> getSolutionSet() {
+        ArrayList<String> solnSet = new ArrayList<String>();
+        
+        // make a queue for traversing the node
+        Queue<Node> nodeQueue = new PriorityQueue<Node>();
+        Node startNode = new Node();
+        Node currentNode = new Node();
+        
+        // node at starting (root)
+        startNode.level = -1;
+        startNode.profit = 0;
+        nodeQueue.add(startNode);
+        
+        // one by one extract an item from decision tree
+        // compute profit (var / cohesion cost) of all children of extracted node and keep saving into max solnSet
+        
+        
+        return solnSet;
+    }
+    
+    // numOfVars
+    public static int computeVarCost(ArrayList<PredObj> solutionList) {
+        int totalVarCost = 0;
+        ArrayList<String> varList = new ArrayList<String>();
+        String v1 = "";
+        String v2 = "";
+
+        for (PredObj p : solutionList) {
+            int endIndex = p.predicate.indexOf(" ");
+            v1 = p.predicate.substring(0, endIndex);
+            if (!v1.trim().equals("0")) {
+                if (!varList.contains(v1)) {
+                    System.out.println("v1: " + v1.trim());
+                    varList.add(v1.trim());
+                }
+            }
+            int startIndex = p.predicate.indexOf("=");
+            v2 = p.predicate.substring(startIndex+1, p.predicate.length());
+            if (!v2.trim().equals("0")) {
+                if (!varList.contains(v2)) {
+                    System.out.println("v2: " + v2.trim());
+                    varList.add(v2.trim());
+                }
+            }
+
+        }
+        totalVarCost = varList.size();
+        System.out.println("Total Var Cost: " + totalVarCost);
+        System.out.println(varList);
+        return totalVarCost;
+    }
+    
+    public static int computeCohesionCost(ArrayList<PredObj> solutionList) {
+        int totalCohesionCost = 0;
+        int cv = 0;
+        for (int i = 0; i < solutionList.size(); i++) {
+            for (int j = 0; j < solutionList.size(); j++) {
+                if (i != j && j > i) {
+                    cv = getCompatValue(solutionList.get(i).predVal, solutionList.get(j).predVal);
+                    totalCohesionCost = totalCohesionCost + cv;
+                }
+            }
+        }
+        System.out.println("Total Cohesion Cost: " + totalCohesionCost);
+        return totalCohesionCost;
     }
     
     public static void readPredFile(String fileName) {
@@ -100,7 +213,7 @@ public class BnB {
         for (int i = 0; i < compatMatrix.length; i++) {
             for (int j = 0; j < compatMatrix.length; j++) {
                 if (compatMatrix[0][j].equals(predValRow) && compatMatrix[i][0].equals(predValCol)) {
-                    System.out.print("FOUND VALUE: " + compatMatrix[i][j] + "\t");
+                    System.out.println("FOUND VALUE FOR: " + predValRow + "," + predValCol + " : " + compatMatrix[i][j] + "\t");
                     compatVal = Integer.parseInt(compatMatrix[i][j]);
                 }
             }
