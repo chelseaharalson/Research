@@ -401,42 +401,32 @@ public class BnB {
         String v1 = "";
         String v2 = "";
 
-	for (PredObj p : predObjList) {
+        for (PredObj p : predObjList) {
             int endIndex = p.predicate.indexOf(" ");
             v1 = p.predicate.substring(0, endIndex);
             if (!v1.trim().equals("0")) {
-                if (!varList.contains(v1.trim())) {
+                if (!varList.contains(v1)) {
                     System.out.println("v1: " + v1.trim());
                     varList.add(v1.trim());
                 }
             }
-	    int startIndex = 0;
-	    if (p.predicate.contains("=")) {
-		startIndex = p.predicate.indexOf("=");
-	    }
-	    else if (!p.predicate.contains("=")) {
-		if (p.predicate.contains("<")) {
-		    startIndex = p.predicate.indexOf("<");
-		}
-		else if (p.predicate.contains(">")) {
-		    startIndex = p.predicate.indexOf(">");
-		}
-	    }
+            int startIndex = p.predicate.indexOf("=");
             v2 = p.predicate.substring(startIndex+1, p.predicate.length());
             if (!v2.trim().equals("0")) {
-                if (!varList.contains(v2.trim())) {
+                if (!varList.contains(v2)) {
                     System.out.println("v2: " + v2.trim());
                     varList.add(v2.trim());
                 }
             }
-	}
+
+        }
         return varList;
     }
     
     public static void writeToOutputFile(ArrayList<PredObj> predObjList, ArrayList<String> varList, ArrayList<String> propPreds) throws IOException {
         System.out.println();
         System.out.println("Writing to output.txt...");
-        FileWriter writer = new FileWriter("output.txt");
+        FileWriter writer = new FileWriter("output_k_"+depth+".txt");
         //writer.append("{"+solSet+"}\n");
         String best = "";
         for (PredObj pVal : predObjList) {
