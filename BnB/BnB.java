@@ -38,8 +38,31 @@ public class BnB {
         readCompatFile(compatFile);
         printCompatFile();
         
+        for (PredObj p : predList) {
+            System.out.println("PRED LIST: " + p.predVal + "\t" + p.predicate);
+        }
+        
+        /*ArrayList<String> sList = new ArrayList<String>();
+        for (PredObj p : predList) {
+            sList.add(p.predVal);
+            System.out.println("Added " + p.predVal);
+        }
+        String[] permArr = sList.toArray(new String[predList.size()]);
+        ArrayList<ArrayList<String>> cp = computePermutations(permArr);
+        System.out.println("All permutations: " + cp);*/
+        
+        computeSolutionSets(predList, 0);
+        printSolutionListAtDepth();
+        //System.out.println("SOLUTION LIST: " + solutionListForLevel);
+        computeSolutionSetCost();
+        HashMap<ArrayList<PredObj>,ArrayList<Integer>> bestSoln = getBestSolution();
+        System.out.println(bestSoln);
+        printBestSolution(bestSoln);
+        System.out.println(bestSolutionVarList);
+        writeToOutputFile(bestSolutionSet, bestSolutionVarList, propList);
+        
         // Test
-        getCompatValue("p5","p9");
+        /*getCompatValue("p5","p9");
         ArrayList<PredObj> testList = new ArrayList<PredObj>();
         PredObj p0 = new PredObj();
         p0.predVal = "p0";
@@ -57,7 +80,7 @@ public class BnB {
         p3.predVal = "p3";
         p3.predicate = "main.0.s >= AirplaneA.1.a";
         testList.add(p3);*/
-        System.out.println();
+        /*System.out.println();
         System.out.println("Printing test list...");
         for (int i = 0; i < testList.size(); i++) {
             System.out.println(testList.get(i).predicate + ", " + testList.get(i).predVal);
@@ -82,7 +105,7 @@ public class BnB {
         System.out.println(bestSoln);
         printBestSolution(bestSoln);
         System.out.println(bestSolutionVarList);
-        writeToOutputFile(bestSolutionSet, bestSolutionVarList, propList);
+        writeToOutputFile(bestSolutionSet, bestSolutionVarList, propList);*/
     }
     
     public static ArrayList<PredObj> computeSolutionSets(ArrayList<PredObj> pValList, int kDepth) {
@@ -250,7 +273,7 @@ public class BnB {
             int endIndex = p.predicate.indexOf(" ");
             v1 = p.predicate.substring(0, endIndex);
             if (!v1.trim().equals("0")) {
-                if (!varList.contains(v1)) {
+                if (!varList.contains(v1.trim())) {
                     System.out.println("v1: " + v1.trim());
                     varList.add(v1.trim());
                 }
@@ -258,7 +281,7 @@ public class BnB {
             int startIndex = p.predicate.indexOf("=");
             v2 = p.predicate.substring(startIndex+1, p.predicate.length());
             if (!v2.trim().equals("0")) {
-                if (!varList.contains(v2)) {
+                if (!varList.contains(v2.trim())) {
                     System.out.println("v2: " + v2.trim());
                     varList.add(v2.trim());
                 }
@@ -266,7 +289,7 @@ public class BnB {
 
         }
         totalVarCost = varList.size();
-        System.out.println("Total Var Cost: " + totalVarCost);
+        System.out.println("@@@Total Var Cost: " + totalVarCost);
         System.out.println(varList);
         return totalVarCost;
     }
@@ -314,8 +337,10 @@ public class BnB {
                 else {
                     pObj.predicate = currentLine;
                     pObj.predVal = "p" + i;
-                    predList.add(pObj);
+                    //ArrayList<PredObj> tempList = new ArrayList<PredObj>(item);
+                    predList.add(new PredObj(pObj.predicate, pObj.predVal));
                     System.out.println("Adding to pred list... " + pObj.predicate + "\t" + pObj.predVal);
+                    //System.out.println(predList);
                     i++;
                 }
             }
