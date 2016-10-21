@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  *
@@ -19,7 +20,8 @@ public class BnB {
     static ArrayList<String> propList = new ArrayList<String>();
     static int depth;
     static ArrayList<ArrayList<PredObj>> solutionListForLevel = new ArrayList<ArrayList<PredObj>>();
-    static HashMap<ArrayList<PredObj>,Integer> solutionCost = new HashMap<ArrayList<PredObj>,Integer>();
+    static HashMap<ArrayList<PredObj>,ArrayList<Integer>> solutionCostMap = new HashMap<ArrayList<PredObj>,ArrayList<Integer>>();
+    static ArrayList<PredObj> bestSolutionSet = new ArrayList<PredObj>();
 
     public static void main(String[] args) throws IOException {
         if (args.length != 3) {
@@ -74,6 +76,9 @@ public class BnB {
         printSolutionListAtDepth();
         //System.out.println("SOLUTION LIST: " + solutionListForLevel);
         computeSolutionSetCost();
+        HashMap<ArrayList<PredObj>,ArrayList<Integer>> bestSoln = getBestSolution();
+        System.out.println(bestSoln);
+        printBestSolution(bestSoln);
     }
     
     public static ArrayList<PredObj> computeSolutionSets(ArrayList<PredObj> pValList, int kDepth) {
@@ -127,6 +132,18 @@ public class BnB {
         }
     }
     
+    public static void printBestSolution(HashMap<ArrayList<PredObj>,ArrayList<Integer>> bestSoln) {
+        System.out.println("Printing best solution...");
+        for (Map.Entry<ArrayList<PredObj>, ArrayList<Integer>> entry : bestSoln.entrySet()) {
+            ArrayList<PredObj> keyList = entry.getKey();
+            ArrayList<Integer> valList = entry.getValue();
+            for (PredObj p : keyList) {
+                System.out.print(p.predVal + " ");
+            }
+            System.out.println("VarCost: " + valList.get(0) + " CohesionCost: " + valList.get(1));
+        }
+    }
+    
     public static ArrayList<ArrayList<String>> computePermutations(String[] pVal) {
         ArrayList<String> item = new ArrayList<String>();
         ArrayList<ArrayList<String>> result = new ArrayList<ArrayList<String>>();
@@ -166,12 +183,54 @@ public class BnB {
             //System.out.println(pList);
             //for (PredObj p : pList) {
                 //System.out.print(p.predVal + " ");
+            ArrayList<Integer> varAndCohesionCost = new ArrayList<Integer>();
             int totalVarCost = computeVarCost(pList);
             int totalCohesionCost = computeCohesionCost(pList);
-            //System.out.println(pList + "\t" + totalVarCost);
+            varAndCohesionCost.add(totalVarCost);
+            varAndCohesionCost.add(totalCohesionCost);
+            solutionCostMap.put(pList, varAndCohesionCost);
+            //System.out.println(pList + "\t" + totalVarCost + "\t" + totalCohesionCost);
             //}
             //System.out.println();
         }
+    }
+    
+    public static HashMap<ArrayList<PredObj>,ArrayList<Integer>> getBestSolution() {
+        HashMap<ArrayList<PredObj>,ArrayList<Integer>> tempSol = new HashMap<ArrayList<PredObj>,ArrayList<Integer>>();
+        int maxVarCost = 0;
+        //int maxCohesionCost = 0;
+        for (Map.Entry<ArrayList<PredObj>, ArrayList<Integer>> entry : solutionCostMap.entrySet()) {
+            ArrayList<PredObj> keyList = entry.getKey();
+            ArrayList<Integer> valList = entry.getValue();
+            //for (Integer val : valList) {
+                //System.out.println("Key: " + keyList + " Value: " + val);
+            //}
+            int totalVarCost = valList.get(0);
+            int totalCohesionCost = valList.get(1);
+            for (PredObj k : keyList) {
+                System.out.print(k.predVal + " ");
+            }
+            System.out.println("\t \t TotalVarCost: " + totalVarCost + " TotalCohesionCost: " + totalCohesionCost);
+            if (totalVarCost > maxVarCost) {
+                maxVarCost = totalVarCost;
+                tempSol.clear();
+                tempSol.put(keyList, valList);
+            }
+            else if (totalVarCost == maxVarCost) {
+                for (Map.Entry<ArrayList<PredObj>, ArrayList<Integer>> existingEntry : tempSol.entrySet()) {
+                    ArrayList<Integer> existingValList = existingEntry.getValue();
+                    int existingTotalCohesionCost = existingValList.get(1);
+                    if (totalCohesionCost > existingTotalCohesionCost) {
+                        tempSol.clear();
+                        tempSol.put(keyList, valList);
+                    }
+                    else {
+                        break;
+                    }
+                }
+            }
+        }
+        return tempSol;
     }
     
     // numOfVars
