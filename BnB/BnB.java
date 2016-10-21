@@ -5,8 +5,6 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.PriorityQueue;
-import java.util.Queue;
 
 /**
  *
@@ -19,10 +17,12 @@ public class BnB {
     static ArrayList<PredObj> predList = new ArrayList<PredObj>();
     static ArrayList<String> propList = new ArrayList<String>();
     static int depth;
-    static ArrayList<ArrayList<String>> solutionList = new ArrayList<ArrayList<String>>();
+    static ArrayList<ArrayList<String>> solutionListForLevel = new ArrayList<ArrayList<String>>();
+    //static ArrayList<PredObj> solutionList = new ArrayList<PredObj>();
     static String solutionString = "";
     static ArrayList<String> preProcessList = new ArrayList<String>();
     //static ArrayList<ArrayList<String>> solutionList = new ArrayList<ArrayList<String>>();
+    //static ArrayList<PredObj> solList = new ArrayList<PredObj>();
 
     public static void main(String[] args) throws IOException {
         if (args.length != 3) {
@@ -72,8 +72,72 @@ public class BnB {
         ArrayList<ArrayList<String>> cp = computePermutations(permArr, 0);
         System.out.println(cp);
         //System.out.println(test);
-        System.out.println(solutionList);
+        System.out.println(solutionListForLevel);
+        
+        
+        /*ArrayList<PredObj> pList = computePermutations(testList, 0);
+        System.out.println("Printing pList");
+        for (PredObj p : pList) {
+            System.out.println(p.predVal);
+        }
+        System.out.println("SOLUTION LIST: " + solutionList);*/
     }
+    
+    /*public static ArrayList<PredObj> computePermutations(ArrayList<PredObj> pValList, int kDepth) {
+        ArrayList<String> item = new ArrayList<String>();
+        ArrayList<PredObj> result = new ArrayList<PredObj>();
+        ArrayList<String> used = new ArrayList<String>();
+        if (pValList.size() == 0) {
+            return result;
+        }
+        return helper(result, item, used, pValList, kDepth);
+    }
+    
+    public static ArrayList<PredObj> helper(ArrayList<PredObj> result, ArrayList<String> item, 
+        ArrayList<String> used, ArrayList<PredObj> pValList, int kDepth) {
+        PredObj pObj = new PredObj();
+        // base case: no more choices
+        if (item.size() == pValList.size()) {
+            //result.add(new ArrayList<String>(item));
+            //result.add(pObj);
+            return result;
+        }
+
+        //if (kDepth < depth) {
+            // recursive case: choose each possible combination
+            // use backtracking... before recursive call, add sth
+            // after recursion, remove what has been added
+            for (int i = 0; i < pValList.size(); i++) {
+                if (!used.contains(pValList.get(i).predVal)) {
+                    item.add(pValList.get(i).predVal);
+                    used.add(pValList.get(i).predVal);
+
+                    /*solutionList.add(item);
+                    System.out.println("ADDED: " + item);
+                    System.out.println(solutionList);
+                    System.out.println();*/
+                    /*System.out.println("LIST: " + item);
+                    solutionList.add(item);
+                    //System.out.println("FINAL: " + solutionList);
+                    //if (!solutionList.contains(item)) solutionList.add(item);
+                    //System.out.println(solutionList);
+                    /*for (String s : item) {
+                        solutionString = solutionString + s + ";";
+                    }
+                    //System.out.println(solutionString);
+                    preProcessList.add(solutionString);
+                    if (!solutionList.contains(preProcessList)) {
+                        solutionList.add(preProcessList);
+                    }
+                    solutionString = "";*/
+                    /*helper(result, item, used, pValList, kDepth+1);
+                    item.remove(item.size()-1);
+                    used.remove(used.size()-1);
+                }
+            }
+        //}
+        return result;
+    }*/
     
     public static ArrayList<ArrayList<String>> computePermutations(String[] pVal, int kDepth) {
         ArrayList<String> item = new ArrayList<String>();
@@ -96,17 +160,21 @@ public class BnB {
         if (kDepth < depth) {
             // recursive case: choose each possible combination
             // use backtracking... before recursive call, add sth
-            // after recursion, emove what has been added
+            // after recursion, remove what has been added
             for (int i = 0; i < pVal.length; i++) {
                 if (!used.contains(pVal[i])) {
                     item.add(pVal[i]);
                     used.add(pVal[i]);
-
-                    /*solutionList.add(item);
-                    System.out.println("ADDED: " + item);
-                    System.out.println(solutionList);
-                    System.out.println();*/
-                    System.out.println("LIST: " + item);
+                    
+                    ArrayList<String> test = new ArrayList<String>(item);
+                    solutionListForLevel.add(test);
+                    System.out.println("LIST: " + test);
+                    //item = new ArrayList<String>();
+                    //System.out.println(solutionListForLevel);
+                    //System.out.println();
+                    
+                    
+                    /*System.out.println("LIST: " + item);
                     for (String s : item) {
                         solutionString = solutionString + s + ";";
                     }
@@ -115,7 +183,7 @@ public class BnB {
                     if (!solutionList.contains(preProcessList)) {
                         solutionList.add(preProcessList);
                     }
-                    solutionString = "";
+                    solutionString = "";*/
                     helper(result, item, used, pVal, kDepth+1);
                     item.remove(item.size()-1);
                     used.remove(used.size()-1);
