@@ -38,9 +38,9 @@ public class BnB {
         readCompatFile(compatFile);
         printCompatFile();
         
-        for (PredObj p : predList) {
+        /*for (PredObj p : predList) {
             System.out.println("PRED LIST: " + p.predVal + "\t" + p.predicate);
-        }
+        }*/
         
         /*ArrayList<String> sList = new ArrayList<String>();
         for (PredObj p : predList) {
@@ -324,8 +324,8 @@ public class BnB {
                 else {
                     //System.out.println(currentLine);
                     if (!currentLine.trim().equals("vars:")) {
-                        variableList.add(currentLine);
-                        System.out.println("Adding to variable list... " + currentLine);
+                        variableList.add(currentLine.trim());
+                        System.out.println("Adding to variable list... " + currentLine.trim());
                     }
                 }
             }
@@ -335,7 +335,7 @@ public class BnB {
                     break;
                 }
                 else {
-                    pObj.predicate = currentLine;
+                    pObj.predicate = currentLine.trim();
                     pObj.predVal = "p" + i;
                     //ArrayList<PredObj> tempList = new ArrayList<PredObj>(item);
                     predList.add(new PredObj(pObj.predicate, pObj.predVal));
@@ -346,8 +346,8 @@ public class BnB {
             }
            // For prop list
             while ((currentLine = bufferedReader.readLine()) != null) {
-                propList.add(currentLine);
-                System.out.println("Adding to prop list... " + currentLine);
+                propList.add(currentLine.trim());
+                System.out.println("Adding to prop list... " + currentLine.trim());
             }
             bufferedReader.close();
         }
