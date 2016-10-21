@@ -401,25 +401,35 @@ public class BnB {
         String v1 = "";
         String v2 = "";
 
-        for (PredObj p : predObjList) {
+	for (PredObj p : predObjList) {
             int endIndex = p.predicate.indexOf(" ");
             v1 = p.predicate.substring(0, endIndex);
             if (!v1.trim().equals("0")) {
-                if (!varList.contains(v1)) {
+                if (!varList.contains(v1.trim())) {
                     System.out.println("v1: " + v1.trim());
                     varList.add(v1.trim());
                 }
             }
-            int startIndex = p.predicate.indexOf("=");
+	    int startIndex = 0;
+	    if (p.predicate.contains("=")) {
+		startIndex = p.predicate.indexOf("=");
+	    }
+	    else if (!p.predicate.contains("=")) {
+		if (p.predicate.contains("<")) {
+		    startIndex = p.predicate.indexOf("<");
+		}
+		else if (p.predicate.contains(">")) {
+		    startIndex = p.predicate.indexOf(">");
+		}
+	    }
             v2 = p.predicate.substring(startIndex+1, p.predicate.length());
             if (!v2.trim().equals("0")) {
-                if (!varList.contains(v2)) {
+                if (!varList.contains(v2.trim())) {
                     System.out.println("v2: " + v2.trim());
                     varList.add(v2.trim());
                 }
             }
-
-        }
+	}
         return varList;
     }
     
