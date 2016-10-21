@@ -2,6 +2,7 @@ import com.opencsv.*;
 import java.io.BufferedReader;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,6 +23,7 @@ public class BnB {
     static ArrayList<ArrayList<PredObj>> solutionListForLevel = new ArrayList<ArrayList<PredObj>>();
     static HashMap<ArrayList<PredObj>,ArrayList<Integer>> solutionCostMap = new HashMap<ArrayList<PredObj>,ArrayList<Integer>>();
     static ArrayList<PredObj> bestSolutionSet = new ArrayList<PredObj>();
+    static ArrayList<String> bestSolutionVarList = new ArrayList<String>();
 
     public static void main(String[] args) throws IOException {
         if (args.length != 3) {
@@ -79,6 +81,8 @@ public class BnB {
         HashMap<ArrayList<PredObj>,ArrayList<Integer>> bestSoln = getBestSolution();
         System.out.println(bestSoln);
         printBestSolution(bestSoln);
+        System.out.println(bestSolutionVarList);
+        writeToOutputFile(bestSolutionSet, bestSolutionVarList, propList);
     }
     
     public static ArrayList<PredObj> computeSolutionSets(ArrayList<PredObj> pValList, int kDepth) {
@@ -137,6 +141,8 @@ public class BnB {
         for (Map.Entry<ArrayList<PredObj>, ArrayList<Integer>> entry : bestSoln.entrySet()) {
             ArrayList<PredObj> keyList = entry.getKey();
             ArrayList<Integer> valList = entry.getValue();
+            bestSolutionVarList = getVars(keyList);
+            bestSolutionSet = keyList;
             for (PredObj p : keyList) {
                 System.out.print(p.predVal + " ");
             }
@@ -352,6 +358,62 @@ public class BnB {
             }
         }
         return compatVal;
+    }
+    
+    public static ArrayList<String> getVars(ArrayList<PredObj> predObjList) {
+        ArrayList<String> varList = new ArrayList<String>();
+        String v1 = "";
+        String v2 = "";
+
+        for (PredObj p : predObjList) {
+            int endIndex = p.predicate.indexOf(" ");
+            v1 = p.predicate.substring(0, endIndex);
+            if (!v1.trim().equals("0")) {
+                if (!varList.contains(v1)) {
+                    System.out.println("v1: " + v1.trim());
+                    varList.add(v1.trim());
+                }
+            }
+            int startIndex = p.predicate.indexOf("=");
+            v2 = p.predicate.substring(startIndex+1, p.predicate.length());
+            if (!v2.trim().equals("0")) {
+                if (!varList.contains(v2)) {
+                    System.out.println("v2: " + v2.trim());
+                    varList.add(v2.trim());
+                }
+            }
+
+        }
+        return varList;
+    }
+    
+    public static void writeToOutputFile(ArrayList<PredObj> predObjList, ArrayList<String> varList, ArrayList<String> propPreds) throws IOException {
+        System.out.println();
+        System.out.println("Writing to output.txt...");
+        FileWriter writer = new FileWriter("output.txt");
+        //writer.append("{"+solSet+"}\n");
+        String best = "";
+        for (PredObj pVal : predObjList) {
+            best = best + pVal.predVal + ",";
+        }
+        best = best.substring(0,best.length()-1);
+        writer.append("{"+best+"}");
+        writer.append("\n");
+        writer.append("vars:\n");
+        for (String v : varList) {
+            writer.append(v + "\n");
+        }
+        writer.append("preds:\n");
+        for (PredObj p : predObjList) {
+            writer.append(p.predicate + "\n");
+        }
+        if (!propPreds.isEmpty()) {
+            writer.append("prop preds:\n");
+            for (String prop : propPreds) {
+                writer.append(prop+"\n");
+            }
+        }
+        writer.close();
     }
     
 }
