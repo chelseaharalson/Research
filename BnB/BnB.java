@@ -278,7 +278,18 @@ public class BnB {
                     varList.add(v1.trim());
                 }
             }
-            int startIndex = p.predicate.indexOf("=");
+	    int startIndex = 0;
+	    if (p.predicate.contains("=")) {
+		startIndex = p.predicate.indexOf("=");
+	    }
+	    else if (!p.predicate.contains("=")) {
+		if (p.predicate.contains("<")) {
+		    startIndex = p.predicate.indexOf("<");
+		}
+		else if (p.predicate.contains(">")) {
+		    startIndex = p.predicate.indexOf(">");
+		}
+	    }
             v2 = p.predicate.substring(startIndex+1, p.predicate.length());
             if (!v2.trim().equals("0")) {
                 if (!varList.contains(v2.trim())) {
